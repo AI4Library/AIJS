@@ -20,6 +20,7 @@ python run.py --model_name gemini-2.5-pro-preview-05-06
 
 Debug mode (runs 10 examples):
 python run.py --model_name gemini-2.5-pro-preview-05-06 --debug
+
 """
 
 import argparse
@@ -704,9 +705,11 @@ if __name__ == "__main__":
             # each iteration consumes 3 random choices: patron, arl, query_type
             for _ in range(start_idx):
                 random.choice(PATRON_TYPES)  # consume patron choice
-                random.choice(ARL_MEMBERS)   # consume arl choice
-                random.choice(QUERY_TYPES)   # consume query_type choice
-            print(f"[Resume] Fast-forwarded random state for {start_idx} completed examples")
+                random.choice(ARL_MEMBERS)  # consume arl choice
+                random.choice(QUERY_TYPES)  # consume query_type choice
+            print(
+                f"[Resume] Fast-forwarded random state for {start_idx} completed examples"
+            )
         else:
             print(f"[Start]  Seed {seed}: fresh run")
 

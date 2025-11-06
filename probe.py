@@ -44,9 +44,7 @@ USAGE:
 - Ablation:   python probe.py --ablation
               Runs temperature sensitivity analysis for Llama-3.1-8B (temp 0.0 and 0.3).
               Outputs: probe_summary_ablation.csv
-
 """
-
 
 import argparse
 import json
@@ -69,14 +67,16 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from tqdm import tqdm
 from xgboost import XGBClassifier
 
-nltk.download('stopwords')
+nltk.download("stopwords")
 stop_words_set = set(stopwords.words("english"))
 
 
-def load_data(model_name: str,
-              characteristic: str,
-              input_dir: str = "outputs",
-              failure_token: str = "[NO_TEXT_AFTER_RETRIES]") -> pd.DataFrame:
+def load_data(
+    model_name: str,
+    characteristic: str,
+    input_dir: str = "outputs",
+    failure_token: str = "[NO_TEXT_AFTER_RETRIES]",
+) -> pd.DataFrame:
     """
     Load model generation outputs and extract text responses and target characteristics.
 
@@ -89,11 +89,18 @@ def load_data(model_name: str,
     Returns:
     - DataFrame with columns ['response', 'label', 'seed'].
     """
-    assert characteristic in ['sex', 'race_ethnicity', 'patron_type'], \
-        "Characteristic must be one of: sex, race_ethnicity, patron_type"
+    assert characteristic in [
+        "sex",
+        "race_ethnicity",
+        "patron_type",
+    ], "Characteristic must be one of: sex, race_ethnicity, patron_type"
 
-    tag = model_name.split('/')[-1].replace('-', '_').replace('/', '_')
-    files = [f for f in os.listdir(input_dir) if f.startswith(f"{tag}_seed_") and f.endswith(".json")]
+    tag = model_name.split("/")[-1].replace("-", "_").replace("/", "_")
+    files = [
+        f
+        for f in os.listdir(input_dir)
+        if f.startswith(f"{tag}_seed_") and f.endswith(".json")
+    ]
 
     rows = []
     for file in files:
@@ -102,22 +109,26 @@ def load_data(model_name: str,
             for entry in data:
                 response = entry["response"]
                 if failure_token not in response:  # Filter out failed generations
-                    rows.append({
-                        "response": response,
-                        "label": entry[characteristic],
-                        "seed": entry["seed"]
-                    })
+                    rows.append(
+                        {
+                            "response": response,
+                            "label": entry[characteristic],
+                            "seed": entry["seed"],
+                        }
+                    )
 
     df = pd.DataFrame(rows)
     df = df.dropna(subset=["response", "label"]).reset_index(drop=True)
     return df
 
 
-def load_data_with_temp(model_name: str,
-                        characteristic: str,
-                        temperature: float,
-                        input_dir: str = "outputs",
-                        failure_token: str = "[NO_TEXT_AFTER_RETRIES]") -> pd.DataFrame:
+def load_data_with_temp(
+    model_name: str,
+    characteristic: str,
+    temperature: float,
+    input_dir: str = "outputs",
+    failure_token: str = "[NO_TEXT_AFTER_RETRIES]",
+) -> pd.DataFrame:
     """
     Load model generation outputs with specific temperature tag.
 
@@ -131,16 +142,24 @@ def load_data_with_temp(model_name: str,
     Returns:
     - DataFrame with columns ['response', 'label', 'seed'].
     """
-    assert characteristic in ['sex', 'race_ethnicity', 'patron_type'], \
-        "Characteristic must be one of: sex, race_ethnicity, patron_type"
+    assert characteristic in [
+        "sex",
+        "race_ethnicity",
+        "patron_type",
+    ], "Characteristic must be one of: sex, race_ethnicity, patron_type"
 
-    tag = model_name.split('/')[-1].replace('-', '_').replace('/', '_')
+    tag = model_name.split("/")[-1].replace("-", "_").replace("/", "_")
     temp_str = f"temp{temperature}"
-    files = [f for f in os.listdir(input_dir)
-             if f.startswith(f"{tag}_{temp_str}_seed_") and f.endswith(".json")]
+    files = [
+        f
+        for f in os.listdir(input_dir)
+        if f.startswith(f"{tag}_{temp_str}_seed_") and f.endswith(".json")
+    ]
 
     if not files:
-        raise FileNotFoundError(f"No files found for {tag} with temperature {temperature}")
+        raise FileNotFoundError(
+            f"No files found for {tag} with temperature {temperature}"
+        )
 
     rows = []
     for file in files:
@@ -149,11 +168,13 @@ def load_data_with_temp(model_name: str,
             for entry in data:
                 response = entry["response"]
                 if failure_token not in response:
-                    rows.append({
-                        "response": response,
-                        "label": entry[characteristic],
-                        "seed": entry["seed"]
-                    })
+                    rows.append(
+                        {
+                            "response": response,
+                            "label": entry[characteristic],
+                            "seed": entry["seed"],
+                        }
+                    )
 
     df = pd.DataFrame(rows)
     df = df.dropna(subset=["response", "label"]).reset_index(drop=True)
@@ -163,7 +184,7 @@ def load_data_with_temp(model_name: str,
 def compute_ci(accs, confidence=0.95):
     mean = np.mean(accs)
     sem = np.std(accs, ddof=1) / np.sqrt(len(accs))
-    h = sem * t.ppf((1 + confidence) / 2., len(accs) - 1)
+    h = sem * t.ppf((1 + confidence) / 2.0, len(accs) - 1)
     return mean, (mean - h, mean + h)
 
 
@@ -175,17 +196,15 @@ def get_feature_weights(clf, feature_names, model_type):
     elif model_type == "xgboost":
         booster = clf.get_booster()
         importance = booster.get_score(importance_type="weight")
-        return pd.DataFrame({
-            "feature": list(importance.keys()),
-            "weight": list(importance.values())
-        }).sort_values(by="weight", ascending=False)
+        return pd.DataFrame(
+            {"feature": list(importance.keys()), "weight": list(importance.values())}
+        ).sort_values(by="weight", ascending=False)
     else:
         raise ValueError("Unsupported model type")
 
-    return pd.DataFrame({
-        "feature": feature_names,
-        "weight": weights
-    }).sort_values(by="weight", ascending=False)
+    return pd.DataFrame({"feature": feature_names, "weight": weights}).sort_values(
+        by="weight", ascending=False
+    )
 
 
 def probe(df, mode="content", max_features=120, model_name=None):
@@ -214,29 +233,30 @@ def probe(df, mode="content", max_features=120, model_name=None):
 
     # vectorize for classifier use
     if mode == "content":
+
         class ContentTokenizer:
             def __init__(self):
-                self.exclusion_set = set(stop_words_set).union({"mr", "ms", "mrs", "miss"})
+                self.exclusion_set = set(stop_words_set).union(
+                    {"mr", "ms", "mrs", "miss"}
+                )
+
             def __call__(self, doc):
                 tokens = [t.strip(string.punctuation).lower() for t in doc.split()]
                 return [t for t in tokens if t and t not in self.exclusion_set]
 
         vectorizer = TfidfVectorizer(
-            tokenizer=ContentTokenizer(),
-            token_pattern=None,
-            max_features=max_features
+            tokenizer=ContentTokenizer(), token_pattern=None, max_features=max_features
         )
         X = vectorizer.fit_transform(df["response"]).toarray()
     else:
+
         class StopwordTokenizer:
             def __call__(self, doc):
                 tokens = [t.strip(string.punctuation).lower() for t in doc.split()]
                 return [t for t in tokens if t in stop_words_set]
 
         vectorizer = CountVectorizer(
-            tokenizer=StopwordTokenizer(),
-            token_pattern=None,
-            max_features=max_features
+            tokenizer=StopwordTokenizer(), token_pattern=None, max_features=max_features
         )
         X = vectorizer.fit_transform(df["response"]).toarray()
         X = StandardScaler().fit_transform(X)
@@ -252,34 +272,38 @@ def probe(df, mode="content", max_features=120, model_name=None):
         "Asian or Pacific Islander",
         "American Indian or Alaska Native",
         "Two or More Races",
-        "Hispanic or Latino"
+        "Hispanic or Latino",
     }:
         # move White (reference) to the end
-        le.classes_ = np.array([
-            "Black or African American",
-            "Asian or Pacific Islander",
-            "American Indian or Alaska Native",
-            "Two or More Races",
-            "Hispanic or Latino",
-            "White"
-        ])
+        le.classes_ = np.array(
+            [
+                "Black or African American",
+                "Asian or Pacific Islander",
+                "American Indian or Alaska Native",
+                "Two or More Races",
+                "Hispanic or Latino",
+                "White",
+            ]
+        )
     elif set(df["label"].unique()) == {
         "Undergraduate student",
         "Faculty",
         "Graduate student",
         "Alumni",
         "Staff",
-        "Outside user"
+        "Outside user",
     }:
         # move undergraduate (reference) to the end
-        le.classes_ = np.array([
-            "Graduate student",
-            "Faculty",
-            "Staff",
-            "Alumni",
-            "Outside user",
-            "Undergraduate student"
-        ])
+        le.classes_ = np.array(
+            [
+                "Graduate student",
+                "Faculty",
+                "Staff",
+                "Alumni",
+                "Outside user",
+                "Undergraduate student",
+            ]
+        )
     else:
         raise RuntimeError(
             f"Label mismatch: unexpected label set encountered:\n{sorted(df['label'].unique())}"
@@ -296,14 +320,27 @@ def probe(df, mode="content", max_features=120, model_name=None):
             C=1.0, max_iter=1000, solver="liblinear", penalty="l2", random_state=42
         ),
         "mlp": lambda: MLPClassifier(
-            hidden_layer_sizes=(128, 64), activation="relu", solver="adam",
-            alpha=1e-4, max_iter=2000, early_stopping=True, random_state=42
+            hidden_layer_sizes=(128, 64),
+            activation="relu",
+            solver="adam",
+            alpha=1e-4,
+            max_iter=2000,
+            early_stopping=True,
+            random_state=42,
         ),
         "xgboost": lambda: XGBClassifier(
-            n_estimators=100, learning_rate=0.1, max_depth=4,
-            subsample=0.8, colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=1.0,
-            use_label_encoder=False, eval_metric="logloss", verbosity=0, random_state=42
-        )
+            n_estimators=100,
+            learning_rate=0.1,
+            max_depth=4,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            use_label_encoder=False,
+            eval_metric="logloss",
+            verbosity=0,
+            random_state=42,
+        ),
     }
 
     for name, constructor in model_defs.items():
@@ -332,11 +369,13 @@ def probe(df, mode="content", max_features=120, model_name=None):
 
     # statsmodels - with adjusted class labels to maintain conceptually clear
     # adjust feature size for shorter-response models (Claude and Gemma-2)
-    if model_name and ("gemma" in model_name.lower() or "claude" in model_name.lower()) and mode == "content":
+    if (
+        model_name
+        and ("gemma" in model_name.lower() or "claude" in model_name.lower())
+        and mode == "content"
+    ):
         vectorizer_stats = TfidfVectorizer(
-            tokenizer=ContentTokenizer(),
-            token_pattern=None,
-            max_features=60
+            tokenizer=ContentTokenizer(), token_pattern=None, max_features=60
         )
         X_stats = vectorizer_stats.fit_transform(df["response"]).toarray()
         feature_names_stats = vectorizer_stats.get_feature_names_out()
@@ -350,22 +389,24 @@ def probe(df, mode="content", max_features=120, model_name=None):
     # create mapping from encoded indices to original concept indices
     # for binary classification (sex)
     if n_classes == 2:
-        sm_model = sm.Logit(y, X_const).fit(disp=0, maxiter=2000, method='lbfgs')
+        sm_model = sm.Logit(y, X_const).fit(disp=0, maxiter=2000, method="lbfgs")
         params, pvals = sm_model.params, sm_model.pvalues
-        feat_const = ['const'] + list(feature_names_stats)
+        feat_const = ["const"] + list(feature_names_stats)
         mask = ~np.isnan(params)
 
         # for sex: male is now encoded as 0, but conceptually it's class 1
-        stats_df = pd.DataFrame({
-            'feature': [feat_const[i] for i in range(len(mask)) if mask[i]],
-            'class': '1',  # male (conceptually class 1)
-            'coef': params[mask],
-            'p_value': pvals[mask]
-        })
+        stats_df = pd.DataFrame(
+            {
+                "feature": [feat_const[i] for i in range(len(mask)) if mask[i]],
+                "class": "1",  # male (conceptually class 1)
+                "coef": params[mask],
+                "p_value": pvals[mask],
+            }
+        )
     else:
-        sm_model = sm.MNLogit(y, X_const).fit(disp=0, maxiter=2000, method='lbfgs')
+        sm_model = sm.MNLogit(y, X_const).fit(disp=0, maxiter=2000, method="lbfgs")
         params, pvals = sm_model.params.flatten(), sm_model.pvalues.flatten()
-        feat_const = ['const'] + list(feature_names_stats)
+        feat_const = ["const"] + list(feature_names_stats)
         feats_exp, classes_exp = [], []
 
         # map encoded classes back to original concept classes
@@ -376,7 +417,7 @@ def probe(df, mode="content", max_features=120, model_name=None):
             "Asian or Pacific Islander",
             "American Indian or Alaska Native",
             "Two or More Races",
-            "Hispanic or Latino"
+            "Hispanic or Latino",
         }:
             # race/ethnicity mapping
             class_map = {
@@ -384,7 +425,7 @@ def probe(df, mode="content", max_features=120, model_name=None):
                 1: 2,  # Asian → 2
                 2: 3,  # American Indian/Alaska Native → 3
                 3: 4,  # Two or More → 4
-                4: 5   # Hispanic → 5
+                4: 5,  # Hispanic → 5
             }
         elif set(df["label"].unique()) == {
             "Undergraduate student",
@@ -392,7 +433,7 @@ def probe(df, mode="content", max_features=120, model_name=None):
             "Graduate student",
             "Alumni",
             "Staff",
-            "Outside user"
+            "Outside user",
         }:
             # patron type mapping
             class_map = {
@@ -400,28 +441,34 @@ def probe(df, mode="content", max_features=120, model_name=None):
                 1: 2,  # Faculty → 2
                 2: 3,  # Staff → 3
                 3: 4,  # Alumni → 4
-                4: 5   # Outside → 5
+                4: 5,  # Outside → 5
             }
 
         # build feature list with mapped classes
         for i, feat in enumerate(feat_const):
             for c in range(n_classes - 1):
                 feats_exp.append(feat)
-                original_class = class_map.get(c, c)  # map back to original concept class
+                original_class = class_map.get(
+                    c, c
+                )  # map back to original concept class
                 classes_exp.append(str(original_class))
 
         valid = ~np.isnan(params)
-        stats_df = pd.DataFrame({
-            'feature': [feats_exp[i] for i in range(len(valid)) if valid[i]],
-            'class': [classes_exp[i] for i in range(len(valid)) if valid[i]],
-            'coef': params[valid],
-            'p_value': pvals[valid]
-        })
+        stats_df = pd.DataFrame(
+            {
+                "feature": [feats_exp[i] for i in range(len(valid)) if valid[i]],
+                "class": [classes_exp[i] for i in range(len(valid)) if valid[i]],
+                "coef": params[valid],
+                "p_value": pvals[valid],
+            }
+        )
 
-    stats_df = stats_df[stats_df.feature != 'const']
-    stats_df = stats_df.dropna(subset=['coef', 'p_value']).reset_index(drop=True)
-    stats_df = stats_df.loc[stats_df['coef'].abs().sort_values(ascending=False).index].reset_index(drop=True)
-    results['statsmodels'] = stats_df
+    stats_df = stats_df[stats_df.feature != "const"]
+    stats_df = stats_df.dropna(subset=["coef", "p_value"]).reset_index(drop=True)
+    stats_df = stats_df.loc[
+        stats_df["coef"].abs().sort_values(ascending=False).index
+    ].reset_index(drop=True)
+    results["statsmodels"] = stats_df
 
     return results
 
@@ -432,7 +479,9 @@ def print_top_features(results, top_n=10):
             print(f"\n=== Top {top_n} features for {model.upper()} ===")
             print(results[model]["feature_weights"].head(top_n).to_string(index=False))
     if "statsmodels" in results:
-        print(f"\n=== Top {top_n} features by STATS MODELS Logistic Regression (with p-values) ===")
+        print(
+            f"\n=== Top {top_n} features by STATS MODELS Logistic Regression (with p-values) ==="
+        )
         print(results["statsmodels"].head(top_n).to_string(index=False))
 
 
@@ -450,6 +499,7 @@ def serialize_for_json(results):
             return {k: convert(v) for k, v in obj.items()}
         else:
             return obj
+
     return convert(results)
 
 
@@ -462,12 +512,14 @@ def main():
     """
     parser = argparse.ArgumentParser(description="Run attribute‐probing suite")
     parser.add_argument(
-        "--debug", action="store_true",
-        help="only run Gemma-2 patron_type/stopwords probe and expose any errors"
+        "--debug",
+        action="store_true",
+        help="only run Gemma-2 patron_type/stopwords probe and expose any errors",
     )
     parser.add_argument(
-        "--ablation", action="store_true",
-        help="run temperature ablation study for Llama-3.1-8B (temp 0.0 and 0.3)"
+        "--ablation",
+        action="store_true",
+        help="run temperature ablation study for Llama-3.1-8B (temp 0.0 and 0.3)",
     )
     args = parser.parse_args()
 
@@ -498,20 +550,24 @@ def main():
                 try:
                     df = load_data_with_temp(model, char, temperature=temp)
                     for mode in modes:
-                        results = probe(df, mode=mode, max_features=120, model_name=model)
+                        results = probe(
+                            df, mode=mode, max_features=120, model_name=model
+                        )
 
                         # Extract results for CSV
                         for classifier in ["logistic", "mlp", "xgboost"]:
                             if classifier in results:
-                                all_results.append({
-                                    "temperature": temp,
-                                    "characteristic": char,
-                                    "mode": mode,
-                                    "classifier": classifier,
-                                    "mean_acc": results[classifier]["mean_acc"],
-                                    "ci_lo": results[classifier]["ci"][0],
-                                    "ci_hi": results[classifier]["ci"][1]
-                                })
+                                all_results.append(
+                                    {
+                                        "temperature": temp,
+                                        "characteristic": char,
+                                        "mode": mode,
+                                        "classifier": classifier,
+                                        "mean_acc": results[classifier]["mean_acc"],
+                                        "ci_lo": results[classifier]["ci"][0],
+                                        "ci_hi": results[classifier]["ci"][1],
+                                    }
+                                )
                         progress.update(1)
                 except FileNotFoundError as e:
                     print(f"\nWarning: {e}")
@@ -523,7 +579,9 @@ def main():
         # Save to CSV
         df_results = pd.DataFrame(all_results)
         df_results.to_csv("probe_summary_ablation.csv", index=False)
-        print("\nAblation study completed. Results saved to 'probe_summary_ablation.csv'.")
+        print(
+            "\nAblation study completed. Results saved to 'probe_summary_ablation.csv'."
+        )
         sys.exit(0)
 
     else:
@@ -533,7 +591,7 @@ def main():
             "google/gemma-2-9b-it",
             "gpt-4o-2024-08-06",
             "claude-3-5-sonnet-20241022",
-            "gemini-2.5-pro-preview-05-06"
+            "gemini-2.5-pro-preview-05-06",
         ]
         characteristics = ["sex", "race_ethnicity", "patron_type"]
         modes = ["content", "stopwords"]
