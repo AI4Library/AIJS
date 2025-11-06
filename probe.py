@@ -101,6 +101,53 @@ def load_data(model_name: str,
     return df
 
 
+def load_data_with_temp(model_name: str,
+                        characteristic: str,
+                        temperature: float,
+                        input_dir: str = "outputs",
+                        failure_token: str = "[NO_TEXT_AFTER_RETRIES]") -> pd.DataFrame:
+    """
+    Load model generation outputs with specific temperature tag.
+
+    Parameters:
+    - model_name: HF model name (e.g., 'meta-llama/Llama-3.1-8B-Instruct').
+    - characteristic: One of 'sex', 'race_ethnicity', or 'patron_type'.
+    - temperature: Temperature value (0.0 or 0.3) for file matching.
+    - input_dir: Directory containing seed-wise output JSON files.
+    - failure_token: Token indicating failed generation to filter out.
+
+    Returns:
+    - DataFrame with columns ['response', 'label', 'seed'].
+    """
+    assert characteristic in ['sex', 'race_ethnicity', 'patron_type'], \
+        "Characteristic must be one of: sex, race_ethnicity, patron_type"
+
+    tag = model_name.split('/')[-1].replace('-', '_').replace('/', '_')
+    temp_str = f"temp{temperature}"
+    files = [f for f in os.listdir(input_dir)
+             if f.startswith(f"{tag}_{temp_str}_seed_") and f.endswith(".json")]
+
+    if not files:
+        raise FileNotFoundError(f"No files found for {tag} with temperature {temperature}")
+
+    rows = []
+    for file in files:
+        with open(os.path.join(input_dir, file), "r", encoding="utf-8") as f:
+            data = json.load(f)
+            for entry in data:
+                response = entry["response"]
+                if failure_token not in response:
+                    rows.append({
+                        "response": response,
+                        "label": entry[characteristic],
+                        "seed": entry["seed"]
+                    })
+
+    df = pd.DataFrame(rows)
+    df = df.dropna(subset=["response", "label"]).reset_index(drop=True)
+    return df
+
+
 def compute_ci(accs, confidence=0.95):
     mean = np.mean(accs)
     sem = np.std(accs, ddof=1) / np.sqrt(len(accs))
@@ -398,12 +445,17 @@ def main():
     """
     Main driver for probing LLM outputs by demographic attributes.
     With --debug, only run a single probe and let errors propagate for inspection.
+    With --ablation, run temperature ablation study for Llama-3.1-8B.
     Otherwise, runs the full grid of models × characteristics × modes.
     """
     parser = argparse.ArgumentParser(description="Run attribute‐probing suite")
     parser.add_argument(
         "--debug", action="store_true",
         help="only run Gemma-2 patron_type/stopwords probe and expose any errors"
+    )
+    parser.add_argument(
+        "--ablation", action="store_true",
+        help="run temperature ablation study for Llama-3.1-8B (temp 0.0 and 0.3)"
     )
     args = parser.parse_args()
 
@@ -416,6 +468,50 @@ def main():
         results = probe(df, mode=mode, max_features=120, model_name=model)
         print("\nDEBUG: full statsmodels output:\n")
         print(results["statsmodels"])
+        sys.exit(0)
+
+    elif args.ablation:
+        print("Running temperature ablation study for Llama-3.1-8B...")
+        model = "meta-llama/Llama-3.1-8B-Instruct"
+        temperatures = [0.0, 0.3]
+        characteristics = ["sex", "race_ethnicity", "patron_type"]
+        modes = ["content", "stopwords"]
+
+        all_results = []
+        total = len(temperatures) * len(characteristics) * len(modes)
+        progress = tqdm(total=total, desc="Running ablation probes")
+
+        for temp in temperatures:
+            for char in characteristics:
+                try:
+                    df = load_data_with_temp(model, char, temperature=temp)
+                    for mode in modes:
+                        results = probe(df, mode=mode, max_features=120, model_name=model)
+
+                        # Extract results for CSV
+                        for classifier in ["logistic", "mlp", "xgboost"]:
+                            if classifier in results:
+                                all_results.append({
+                                    "temperature": temp,
+                                    "characteristic": char,
+                                    "mode": mode,
+                                    "classifier": classifier,
+                                    "mean_acc": results[classifier]["mean_acc"],
+                                    "ci_lo": results[classifier]["ci"][0],
+                                    "ci_hi": results[classifier]["ci"][1]
+                                })
+                        progress.update(1)
+                except FileNotFoundError as e:
+                    print(f"\nWarning: {e}")
+                    progress.update(len(modes))
+                    continue
+
+        progress.close()
+
+        # Save to CSV
+        df_results = pd.DataFrame(all_results)
+        df_results.to_csv("probe_summary_ablation.csv", index=False)
+        print("\nAblation study completed. Results saved to 'probe_summary_ablation.csv'.")
         sys.exit(0)
 
     else:
