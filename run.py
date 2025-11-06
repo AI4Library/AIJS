@@ -668,7 +668,9 @@ if __name__ == "__main__":
                 f"[Warning] model '{args.model_name}' does NOT support a system role; will use fallback formatting."
             )
 
-    tag = args.model_name.split("/")[-1].replace("-", "_")
+    # append temperature to tag only if not default (0.7)
+    base_tag = args.model_name.split("/")[-1].replace("-", "_")
+    tag = f"{base_tag}_temp{args.temperature}" if args.temperature != 0.7 else base_tag
 
     # detect seeds that are fully finished (ignore *_partial.json)
     completed_seeds = {
@@ -684,7 +686,7 @@ if __name__ == "__main__":
 
         # set the random seed at the start of each seed iteration
         random.seed(seed)
-        np.random.seed(seed)  # Also set numpy seed for consistency
+        np.random.seed(seed)  # also set numpy seed for consistency
 
         # paths
         final_path = os.path.join(OUTPUT_DIR, f"{tag}_seed_{seed}.json")
