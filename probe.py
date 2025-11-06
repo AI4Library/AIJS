@@ -33,6 +33,18 @@ REFERENCE GROUP ENCODINGS (used by statsmodels for baseline class):
 - Patron Type:     Undergraduate student (0), Graduate student (1), Faculty (2),
                    Staff (3), Alumni (4), Outside user (5)
 
+USAGE:
+- Default:    python probe.py
+              Runs full evaluation across all models, characteristics, and modes.
+              Outputs: probe.json
+
+- Debug:      python probe.py --debug
+              Runs single probe (Gemma-2, patron_type, stopwords) for testing.
+
+- Ablation:   python probe.py --ablation
+              Runs temperature sensitivity analysis for Llama-3.1-8B (temp 0.0 and 0.3).
+              Outputs: probe_summary_ablation.csv
+
 """
 
 
