@@ -76,6 +76,8 @@ def load_data(
     characteristic: str,
     input_dir: str = "outputs",
     failure_token: str = "[NO_TEXT_AFTER_RETRIES]",
+    *,
+    temperature_filter: float | None = None,
 ) -> pd.DataFrame:
     """
     Load model generation outputs and extract text responses and target characteristics.
@@ -85,6 +87,8 @@ def load_data(
     - characteristic: One of 'sex', 'race_ethnicity', or 'patron_type'.
     - input_dir: Directory containing seed-wise output JSON files.
     - failure_token: Token indicating failed generation to filter out.
+    - temperature_filter: If provided, only load files with *_temp{temperature}_seed_*.json.
+                          If None, only load non-temp-tag files (default 0.7).
 
     Returns:
     - DataFrame with columns ['response', 'label', 'seed'].
@@ -96,10 +100,15 @@ def load_data(
     ], "Characteristic must be one of: sex, race_ethnicity, patron_type"
 
     tag = model_name.split("/")[-1].replace("-", "_").replace("/", "_")
+
+    # select files either with a specific temp tag or only the non-tagged (default) ones
+    if temperature_filter is None:
+        prefix = f"{tag}_seed_"
+    else:
+        prefix = f"{tag}_temp{temperature_filter}_seed_"
+
     files = [
-        f
-        for f in os.listdir(input_dir)
-        if f.startswith(f"{tag}_seed_") and f.endswith(".json")
+        f for f in os.listdir(input_dir) if f.startswith(prefix) and f.endswith(".json")
     ]
 
     rows = []
@@ -521,6 +530,13 @@ def main():
         action="store_true",
         help="run temperature ablation study for Llama-3.1-8B (temp 0.0 and 0.3)",
     )
+    parser.add_argument(
+        "--temperature_filter",
+        type=float,
+        default=None,
+        help="if set, only load files with this temperature tag (e.g., 0.0 -> *_temp0.0_seed_*.json). "
+        "if omitted, only load non-tagged files (default 0.7).",
+    )
     args = parser.parse_args()
 
     if args.debug:
@@ -528,7 +544,7 @@ def main():
         char = "patron_type"
         mode = "stopwords"
         print(f"DEBUG: running single probe for {model} / {char} / {mode}")
-        df = load_data(model, char)
+        df = load_data(model, char, temperature_filter=args.temperature_filter)
         results = probe(df, mode=mode, max_features=120, model_name=model)
         print("\nDEBUG: full statsmodels output:\n")
         print(results["statsmodels"])
@@ -603,7 +619,7 @@ def main():
         for model in model_names:
             all_results[model] = {}
             for char in characteristics:
-                df = load_data(model, char)
+                df = load_data(model, char, temperature_filter=args.temperature_filter)
                 all_results[model][char] = {}
                 for mode in modes:
                     results = probe(df, mode=mode, max_features=120, model_name=model)
