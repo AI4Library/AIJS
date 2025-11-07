@@ -45,7 +45,7 @@ USAGE:
 
 - Ablation:   python probe.py --ablation
               Runs temperature sensitivity analysis for Llama-3.1-8B (temp 0.0 and 0.3).
-              Outputs: probe_summary_ablation.csv
+              Outputs: probe_ablation.json
 """
 
 import argparse
@@ -530,13 +530,15 @@ def main():
     parser.add_argument(
         "--ablation",
         action="store_true",
-        help="run temperature ablation study for Llama-3.1-8B (temp 0.0 and 0.3)",
+        help="run temperature ablation study for Llama-3.1-8B (temp 0.0 and 0.3); "
+        "writes probe_ablation.json",
     )
     parser.add_argument(
         "--temperature_filter",
         type=float,
         default=None,
-        help="if set, only load files with this temperature tag (e.g., 0.0 -> *_temp0.0_seed_*.json). "
+        help="if set, only load files with this temperature tag (e.g., 0.0 -> "
+        "*_temp0.0_seed_*.json). "
         "if omitted, only load non-tagged files (default 0.7).",
     )
     args = parser.parse_args()
@@ -553,53 +555,44 @@ def main():
         sys.exit(0)
 
     elif args.ablation:
+
         print("Running temperature ablation study for Llama-3.1-8B...")
         model = "meta-llama/Llama-3.1-8B-Instruct"
         temperatures = [0.0, 0.3]
         characteristics = ["sex", "race_ethnicity", "patron_type"]
         modes = ["content", "stopwords"]
 
-        all_results = []
+        # same nested structure as the main run:
+        # { "<model> [temp=0.0]": { "<characteristic>": { "<mode>": results, ... }, ... }, ... }
+        all_results = {}
+
         total = len(temperatures) * len(characteristics) * len(modes)
         progress = tqdm(total=total, desc="Running ablation probes")
 
         for temp in temperatures:
+            model_tag = f"{model} [temp={temp}]"
+            all_results[model_tag] = {}
             for char in characteristics:
                 try:
                     df = load_data_with_temp(model, char, temperature=temp)
-                    for mode in modes:
-                        results = probe(
-                            df, mode=mode, max_features=120, model_name=model
-                        )
-
-                        # Extract results for CSV
-                        for classifier in ["logistic", "mlp", "xgboost"]:
-                            if classifier in results:
-                                all_results.append(
-                                    {
-                                        "temperature": temp,
-                                        "characteristic": char,
-                                        "mode": mode,
-                                        "classifier": classifier,
-                                        "mean_acc": results[classifier]["mean_acc"],
-                                        "ci_lo": results[classifier]["ci"][0],
-                                        "ci_hi": results[classifier]["ci"][1],
-                                    }
-                                )
-                        progress.update(1)
                 except FileNotFoundError as e:
                     print(f"\nWarning: {e}")
+                    # skip both modes for this characteristic
                     progress.update(len(modes))
                     continue
 
+                all_results[model_tag][char] = {}
+                for mode in modes:
+                    results = probe(df, mode=mode, max_features=120, model_name=model)
+                    all_results[model_tag][char][mode] = results
+                    progress.update(1)
         progress.close()
 
-        # Save to CSV
-        df_results = pd.DataFrame(all_results)
-        df_results.to_csv("probe_summary_ablation.csv", index=False)
-        print(
-            "\nAblation study completed. Results saved to 'probe_summary_ablation.csv'."
-        )
+        # write JSON with same serializer as main
+        with open("probe_ablation.json", "w") as f:
+            json.dump(serialize_for_json(all_results), f, indent=2)
+
+        print("\nAblation study completed. Results saved to 'probe_ablation.json'.")
         sys.exit(0)
 
     else:
