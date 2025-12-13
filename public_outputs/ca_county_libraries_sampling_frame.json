@@ -1,0 +1,357 @@
+{
+  "source_url": "https://califa.org/members/member-list",
+  "retrieved_utc": "2025-12-13T04:07:26Z",
+  "n": 50,
+  "libraries": [
+    {
+      "member": "Alameda County Library",
+      "address": "2400 Stevenson Blvd.",
+      "city": "Fremont",
+      "state": "CA",
+      "zip": "94538"
+    },
+    {
+      "member": "Alpine County Library & Archives",
+      "address": "PO Box 187",
+      "city": "Markleeville",
+      "state": "CA",
+      "zip": "96120"
+    },
+    {
+      "member": "Amador County Library",
+      "address": "530 Sutter Street",
+      "city": "Jackson",
+      "state": "CA",
+      "zip": "95642"
+    },
+    {
+      "member": "Butte County Library",
+      "address": "1820 Mitchell Ave",
+      "city": "Oroville",
+      "state": "CA",
+      "zip": "95966"
+    },
+    {
+      "member": "Calaveras County Library",
+      "address": "1299 Gold Hunter Rd",
+      "city": "San Andreas",
+      "state": "CA",
+      "zip": "95249"
+    },
+    {
+      "member": "Colusa County Library",
+      "address": "738 Market Street",
+      "city": "Colusa",
+      "state": "CA",
+      "zip": "95932"
+    },
+    {
+      "member": "Contra Costa County Library",
+      "address": "777 Arnold Drive, Suite 210",
+      "city": "Martinez",
+      "state": "CA",
+      "zip": "94553"
+    },
+    {
+      "member": "County of Los Angeles Public Library",
+      "address": "7400 East Imperial Highway",
+      "city": "Downey",
+      "state": "CA",
+      "zip": "90241"
+    },
+    {
+      "member": "Del Norte County Library",
+      "address": "190 Price Mall",
+      "city": "Crescent City",
+      "state": "CA",
+      "zip": "95531"
+    },
+    {
+      "member": "El Dorado County Library",
+      "address": "345 Fair Lane",
+      "city": "Placerville",
+      "state": "CA",
+      "zip": "95667"
+    },
+    {
+      "member": "Fresno County Public Library",
+      "address": "2420 Mariposa St.",
+      "city": "Fresno",
+      "state": "CA",
+      "zip": "93721"
+    },
+    {
+      "member": "Humboldt County Library",
+      "address": "1313 Third Street",
+      "city": "Eureka",
+      "state": "CA",
+      "zip": "95501"
+    },
+    {
+      "member": "Imperial County Free Library",
+      "address": "1331 S Clark Road, Bldg. 24",
+      "city": "El Centro",
+      "state": "CA",
+      "zip": "92243"
+    },
+    {
+      "member": "Inyo County Free Library",
+      "address": "168 N. Edwards St, Post Office Drawer K",
+      "city": "Independence",
+      "state": "CA",
+      "zip": "93526"
+    },
+    {
+      "member": "Kern County Library",
+      "address": "701 Truxtun Avenue",
+      "city": "Bakersfield",
+      "state": "CA",
+      "zip": "93301"
+    },
+    {
+      "member": "Kings County Library",
+      "address": "401 N. Douty St.",
+      "city": "Hanford",
+      "state": "CA",
+      "zip": "93230"
+    },
+    {
+      "member": "Lake County Library",
+      "address": "1425 N. High St.",
+      "city": "Lakeport",
+      "state": "CA",
+      "zip": "95453"
+    },
+    {
+      "member": "Madera County Library",
+      "address": "200 West 4th Street",
+      "city": "Madera",
+      "state": "CA",
+      "zip": "93637"
+    },
+    {
+      "member": "Marin County Free Library",
+      "address": "3501 Civic Center Dr, #414",
+      "city": "San Rafael",
+      "state": "CA",
+      "zip": "94903"
+    },
+    {
+      "member": "Mariposa County Library",
+      "address": "4978 10th Street",
+      "city": "Mariposa",
+      "state": "CA",
+      "zip": "95338"
+    },
+    {
+      "member": "Mendocino County Library",
+      "address": "105 N. Main St.",
+      "city": "Ukiah",
+      "state": "CA",
+      "zip": "95482"
+    },
+    {
+      "member": "Merced County Library",
+      "address": "2100 “O” Street",
+      "city": "Merced",
+      "state": "CA",
+      "zip": "95340"
+    },
+    {
+      "member": "Modoc County Library",
+      "address": "212 W. 3rd Street",
+      "city": "Alturas",
+      "state": "CA",
+      "zip": "96101-3913"
+    },
+    {
+      "member": "Mono County Free Library",
+      "address": "PO Box 1120, 400 Sierra Park Rd",
+      "city": "Mammoth Lakes",
+      "state": "CA",
+      "zip": "93546"
+    },
+    {
+      "member": "Monterey County Free Libraries",
+      "address": "188 Seaside Circle",
+      "city": "Marina",
+      "state": "CA",
+      "zip": "93933"
+    },
+    {
+      "member": "Napa County Library",
+      "address": "580 Coombs St.",
+      "city": "Napa",
+      "state": "CA",
+      "zip": "94559"
+    },
+    {
+      "member": "Nevada County Library (Madelyn Helling County Library)",
+      "address": "980 Helling Way, Government Cen",
+      "city": "Nevada City",
+      "state": "CA",
+      "zip": "95959"
+    },
+    {
+      "member": "Orange County Public Library",
+      "address": "1501 E. St. Andrews Place",
+      "city": "Santa Ana",
+      "state": "CA",
+      "zip": "92705"
+    },
+    {
+      "member": "Placer County Library",
+      "address": "350 Nevada St.",
+      "city": "Auburn",
+      "state": "CA",
+      "zip": "95603"
+    },
+    {
+      "member": "Plumas County Library",
+      "address": "445 Jackson St",
+      "city": "Quincy",
+      "state": "CA",
+      "zip": "95971"
+    },
+    {
+      "member": "Riverside County Library System",
+      "address": "Executive Office",
+      "city": "Riverside",
+      "state": "CA",
+      "zip": "92501-3679"
+    },
+    {
+      "member": "San Benito County Free Library",
+      "address": "470 Fifth St.",
+      "city": "Hollister",
+      "state": "CA",
+      "zip": "95023"
+    },
+    {
+      "member": "San Bernardino County Library",
+      "address": "104 W. 4th Street",
+      "city": "San Bernardino",
+      "state": "CA",
+      "zip": "92415-0035"
+    },
+    {
+      "member": "San Diego County Library",
+      "address": "5555 Overland Avenue, Suite 1511",
+      "city": "San Diego",
+      "state": "CA",
+      "zip": "92123"
+    },
+    {
+      "member": "San Luis Obispo-County Library",
+      "address": "995 Palm Street",
+      "city": "San Luis Obispo",
+      "state": "CA",
+      "zip": "93403"
+    },
+    {
+      "member": "San Mateo County Library",
+      "address": "125 Lessingia Court",
+      "city": "San Mateo",
+      "state": "CA",
+      "zip": "94402"
+    },
+    {
+      "member": "Santa Clara County Library",
+      "address": "14600 Winchester Bvld",
+      "city": "Los Gatos",
+      "state": "CA",
+      "zip": "96032"
+    },
+    {
+      "member": "Siskiyou County Free Library",
+      "address": "719 4th Street",
+      "city": "Yreka",
+      "state": "CA",
+      "zip": "96907-3381"
+    },
+    {
+      "member": "Solano County Library",
+      "address": "1150 Kentucky St.",
+      "city": "Fairfield",
+      "state": "CA",
+      "zip": "94533"
+    },
+    {
+      "member": "Sonoma County Library",
+      "address": "Third & E Streets",
+      "city": "Santa Rosa",
+      "state": "CA",
+      "zip": "95404"
+    },
+    {
+      "member": "Stanislaus County Library",
+      "address": "1500 I Street",
+      "city": "Modesto",
+      "state": "CA",
+      "zip": "95354"
+    },
+    {
+      "member": "Stockton-San Joaquin County Public Library",
+      "address": "605 N. El Dorado St.",
+      "city": "Stockton",
+      "state": "CA",
+      "zip": "95202"
+    },
+    {
+      "member": "Sutter County Library",
+      "address": "750 Forbes Ave.",
+      "city": "Yuba City",
+      "state": "CA",
+      "zip": "95991"
+    },
+    {
+      "member": "Tehama County Library",
+      "address": "645 Madison Street",
+      "city": "Red Bluff",
+      "state": "CA",
+      "zip": "96080"
+    },
+    {
+      "member": "Trinity County Free Library",
+      "address": "211 N. Main Street",
+      "city": "Weaverville",
+      "state": "CA",
+      "zip": "96903"
+    },
+    {
+      "member": "Tulare County Library",
+      "address": "200 W. Oak",
+      "city": "Visalia",
+      "state": "CA",
+      "zip": "93291"
+    },
+    {
+      "member": "Tuolumne County Library",
+      "address": "480 Greenley Rd",
+      "city": "Sonora",
+      "state": "CA",
+      "zip": "95370"
+    },
+    {
+      "member": "Ventura County Library",
+      "address": "646 County Square Drive #150",
+      "city": "Ventura",
+      "state": "CA",
+      "zip": "93003"
+    },
+    {
+      "member": "Yolo County Library",
+      "address": "226 Buckeye St.",
+      "city": "Woodland",
+      "state": "CA",
+      "zip": "95695"
+    },
+    {
+      "member": "Yuba County Library",
+      "address": "303 Second Street",
+      "city": "Marysville",
+      "state": "CA",
+      "zip": "95901"
+    }
+  ]
+}
