@@ -63,49 +63,113 @@ CALIFA_MEMBER_LIST_URL = "https://califa.org/members/member-list"
 
 def load_ca_county_public_libraries():
     """
-    Build a list of California county public libraries using Califa's member list as a lookup table.
+    build a list of california county public libraries using califa's member list.
 
-    Heuristic:
-      - state == CA
-      - library_name contains 'County' (case-insensitive)
-      - plus allowlist for a few county systems that don't always include the literal word 'County'
-        (e.g., 'OC Public Libraries' if present)
-
-    Returns: list[dict] with keys: member, address, city, state, zip
+    robust to header/column-name quirks in pd.read_html by:
+      - searching for the best candidate table
+      - normalizing column names if present
+      - falling back to positional columns (first 5)
     """
-    html = requests.get(CALIFA_MEMBER_LIST_URL, timeout=60).text
+    resp = requests.get(CALIFA_MEMBER_LIST_URL, timeout=60)
+    resp.raise_for_status()
+    html = resp.text
+
     tables = pd.read_html(io.StringIO(html))
     if not tables:
-        raise RuntimeError("No tables found on Califa member list page.")
-    df = tables[0].copy()
-    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+        raise RuntimeError("no tables found on califa member list page.")
 
-    required = {"library_name", "address", "city", "state", "zip"}
-    missing = required - set(df.columns)
-    if missing:
-        raise RuntimeError(f"Califa table missing expected columns: {sorted(missing)}")
+    def normalize_col(col):
+        if isinstance(col, tuple):
+            col = " ".join(str(x) for x in col if x is not None and str(x) != "nan")
+        col = str(col).strip().lower()
+        col = re.sub(r"\s+", " ", col)
+        col = re.sub(r"[^a-z0-9]+", "", col)
+        return col
 
-    df = df[df["state"].astype(str).str.upper().eq("CA")].copy()
+    # pick the best candidate table (many rows, >=5 cols, and/or recognizable headers)
+    best = None
+    best_score = -1
+    for t in tables:
+        if t.shape[1] < 5 or t.shape[0] < 50:
+            continue
+        norm = [normalize_col(c) for c in t.columns]
+        score = 0
+        for key in ["libraryname", "address", "city", "state", "zip", "zipcode"]:
+            if key in norm:
+                score += 1
+        # prefer the one that looks most like the member list table
+        score = score * 100 + t.shape[0]
+        if score > best_score:
+            best, best_score = t.copy(), score
 
-    name = df["library_name"].astype(str)
+    if best is None:
+        # last resort: just take the largest table with >=5 columns
+        candidates = [t for t in tables if t.shape[1] >= 5]
+        if not candidates:
+            raise RuntimeError("no table with >=5 columns found on califa member list page.")
+        best = max(candidates, key=lambda x: x.shape[0]).copy()
+
+    df = best.copy()
+
+    # flatten/normalize column names
+    norm_cols = [normalize_col(c) for c in df.columns]
+
+    # try to map by names if possible
+    col_map = {}
+    for i, c in enumerate(norm_cols):
+        if c in ("libraryname", "library", "librarysystem", "librarysystemoffice", "librarynameaddresscitystatezip"):
+            col_map["library_name"] = df.columns[i]
+        elif c == "address":
+            col_map["address"] = df.columns[i]
+        elif c == "city":
+            col_map["city"] = df.columns[i]
+        elif c == "state":
+            col_map["state"] = df.columns[i]
+        elif c in ("zip", "zipcode"):
+            col_map["zip"] = df.columns[i]
+
+    if set(col_map.keys()) >= {"library_name", "address", "city", "state", "zip"}:
+        df = df.rename(
+            columns={
+                col_map["library_name"]: "library_name",
+                col_map["address"]: "address",
+                col_map["city"]: "city",
+                col_map["state"]: "state",
+                col_map["zip"]: "zip",
+            }
+        )
+        df = df[["library_name", "address", "city", "state", "zip"]].copy()
+    else:
+        # fallback: assume first 5 columns are the member list schema
+        df = df.iloc[:, :5].copy()
+        df.columns = ["library_name", "address", "city", "state", "zip"]
+
+    # basic cleanup
+    for c in ["library_name", "address", "city", "state", "zip"]:
+        df[c] = df[c].astype(str).str.strip()
+
+    # filter to california
+    df = df[df["state"].str.upper().eq("CA")].copy()
+
+    # keep county public library systems
+    name = df["library_name"]
     is_county = name.str.contains(r"\bCounty\b", case=False, na=False)
 
-    # allowlist (kept minimal on purpose)
+    # allowlist (kept minimal)
     allowlist = name.str.contains(r"\bOC Public Libraries\b", case=False, na=False)
 
     df = df[is_county | allowlist].copy()
 
-    # avoid non-public / irrelevant matches (rare, but keep the filter conservative)
-    # NOTE: do not over-filter; keep coverage broad.
+    # drop obvious non-public county entries
     drop_patterns = [
-        r"\bLaw Library\b",
-        r"\bCounty Law\b",
-        r"\bUniversity\b",
-        r"\bCollege\b",
-        r"\bSchool\b",
+        r"\bpublic law library\b",
+        r"\blaw library\b",
+        r"\buniversity\b",
+        r"\bcollege\b",
+        r"\bschool\b",
     ]
     for pat in drop_patterns:
-        df = df[~df["library_name"].astype(str).str.contains(pat, case=False, na=False)]
+        df = df[~df["library_name"].str.contains(pat, case=False, na=False)]
 
     df = df.sort_values(["library_name", "city"]).reset_index(drop=True)
 
@@ -113,21 +177,21 @@ def load_ca_county_public_libraries():
     for _, row in df.iterrows():
         libraries.append(
             {
-                "member": str(row["library_name"]).strip(),
-                "address": str(row["address"]).strip(),
-                "city": str(row["city"]).strip(),
-                "state": str(row["state"]).strip(),
-                "zip": str(row["zip"]).strip(),
+                "member": row["library_name"],
+                "address": row["address"],
+                "city": row["city"],
+                "state": row["state"],
+                "zip": row["zip"],
             }
         )
 
     if len(libraries) < 10:
         raise RuntimeError(
-            f"Too few CA county libraries after filtering ({len(libraries)}). "
-            "Check the source table or filtering rules."
+            f"too few ca county libraries after filtering ({len(libraries)}). "
+            "check the source table or filtering rules."
         )
 
-    # save the sampling frame for transparency/reproducibility
+    # save sampling frame for reproducibility
     frame_path = os.path.join(OUTPUT_DIR, "ca_county_libraries_sampling_frame.json")
     with open(frame_path, "w", encoding="utf-8") as f:
         json.dump(
@@ -143,6 +207,7 @@ def load_ca_county_public_libraries():
         )
 
     return libraries
+
 
 
 # ---- name sampling (copied from run.py for strict comparability) ----
