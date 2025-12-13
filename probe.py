@@ -1,5 +1,5 @@
 """
-Bias probing via attributes classification of LLM outputs (open models only)
+Bias probing via attribute classification of LLM outputs (open models only)
 
 This script probes whether open-weight model outputs exhibit systematic variation across
 demographic characteristics (sex, race/ethnicity, patron type).
@@ -8,22 +8,27 @@ it loads seed-wise JSON files produced by:
 - academic: run.py  -> academic_outputs/
 - public:   public_run.py -> public_outputs/
 
-then it trains simple classifiers to predict demographic labels from response text using:
-- content words (tf-idf, with english stopwords removed)
+then it trains simple text classifiers to predict demographic labels from response text.
+we use content words only:
+- tf-idf features with english stopwords removed
+- a fixed tf-idf vocabulary size (50 terms) across all models and domains to keep runs
+  comparable and to reduce statsmodels instability
 
-notes:
-- function-word-only probing is removed (not needed)
-- only open models are evaluated: llama-3.1-8b, ministral-8b, gemma-2-9b
-- we use leave-one-seed-out splits (5 folds if you used 5 seeds)
+evaluation:
+- leave-one-seed-out splits (one seed held out per fold)
+
+models:
+- open models only: llama-3.1-8b, ministral-8b, gemma-2-9b
 
 outputs:
-- probe.json (default) with results for both academic + public domains
+- probe.json (default) with results for the requested domains
 - probe_ablation.json if you run --ablation (llama temp 0.0 vs 0.3, academic only)
 
 usage:
 python probe.py
 python probe.py --domains academic
 python probe.py --domains public
+python probe.py --domains academic public --output_path probe.json
 python probe.py --ablation
 python probe.py --debug
 """
@@ -58,9 +63,8 @@ DOMAIN_TO_DIR = {
     "public": "public_outputs",
 }
 
-# reduce content features for gemma (shorter responses)
-DEFAULT_MAX_FEATURES = 120
-GEMMA_MAX_FEATURES = 60
+# fixed tf-idf vocabulary size (same for all models and domains)
+TFIDF_MAX_FEATURES = 50
 
 
 def load_data(
@@ -231,19 +235,31 @@ def encode_labels_for_statsmodels(df: pd.DataFrame):
             f"label mismatch: unexpected label set encountered:\n{sorted(labels)}"
         )
 
-    # manual encoding with explicit class order
     class_to_idx = {c: i for i, c in enumerate(classes)}
     y = df["label"].map(class_to_idx).astype(int).to_numpy()
-
     return y, classes, label_kind
+
+
+def safe_get_pvalues(sm_results, n_params: int):
+    """
+    statsmodels can fail to compute p-values if the hessian/covariance is singular.
+    in that case we return NaNs instead of raising.
+    """
+    try:
+        p = np.asarray(sm_results.pvalues)
+        return p
+    except Exception:
+        return np.full((n_params,), np.nan, dtype=float)
 
 
 def probe_content(df: pd.DataFrame, *, model_name: str, max_features: int):
     """
     content-only probing (tf-idf)
+
     returns:
-      - classifiers: logistic / mlp / xgboost (acc + avg weights)
-      - statsmodels: coefficients + p-values (logit / mnlogit)
+      - classifiers: logistic / mlp / xgboost (mean acc + ci, avg feature weights)
+      - statsmodels: coefficients + p-values (logit or mnlogit). if p-values cannot be
+        computed due to covariance issues, p_value is set to NaN instead of crashing.
     """
     results = {}
 
@@ -307,77 +323,68 @@ def probe_content(df: pd.DataFrame, *, model_name: str, max_features: int):
 
         results[name] = {"mean_acc": mean_acc, "ci": ci, "feature_weights": avg_weights}
 
-    # statsmodels
-    # for gemma, keep statsmodels feature cap aligned with the main probe cap
-    vectorizer_stats = build_content_vectorizer(max_features=max_features)
-    X_stats = vectorizer_stats.fit_transform(df["response"]).toarray()
-    feature_names_stats = vectorizer_stats.get_feature_names_out()
+    # statsmodels (robust to covariance failures)
+    try:
+        vectorizer_stats = build_content_vectorizer(max_features=max_features)
+        X_stats = vectorizer_stats.fit_transform(df["response"]).toarray()
+        feature_names_stats = vectorizer_stats.get_feature_names_out()
 
-    X_const = sm.add_constant(X_stats)
-    n_classes = len(np.unique(y))
+        X_const = sm.add_constant(X_stats)
+        n_classes = len(np.unique(y))
 
-    if n_classes == 2:
-        # sex: y=1 means M (by our encoding)
-        sm_model = sm.Logit(y, X_const).fit(disp=0, maxiter=2000, method="lbfgs")
-        params, pvals = sm_model.params, sm_model.pvalues
-        feat_const = ["const"] + list(feature_names_stats)
-        mask = ~np.isnan(params)
+        if n_classes == 2:
+            sm_res = sm.Logit(y, X_const).fit(disp=0, maxiter=2000, method="lbfgs")
+            params = np.asarray(sm_res.params)
+            pvals = safe_get_pvalues(sm_res, n_params=len(params))
+            feat_const = ["const"] + list(feature_names_stats)
 
-        stats_df = pd.DataFrame(
-            {
-                "feature": [feat_const[i] for i in range(len(mask)) if mask[i]],
-                "class": "M",
-                "coef": params[mask],
-                "p_value": pvals[mask],
-            }
-        )
-    else:
-        sm_model = sm.MNLogit(y, X_const).fit(disp=0, maxiter=2000, method="lbfgs")
-        params, pvals = sm_model.params.flatten(), sm_model.pvalues.flatten()
-        feat_const = ["const"] + list(feature_names_stats)
+            stats_df = pd.DataFrame(
+                {
+                    "feature": feat_const[1:],
+                    "class": "M",
+                    "coef": params[1:],
+                    "p_value": pvals[1:],
+                }
+            )
+        else:
+            sm_res = sm.MNLogit(y, X_const).fit(disp=0, maxiter=2000, method="lbfgs")
+            params = np.asarray(sm_res.params).flatten()
+            pvals = safe_get_pvalues(sm_res, n_params=len(params))
+            feat_const = ["const"] + list(feature_names_stats)
 
-        feats_exp, classes_exp = [], []
+            feats_exp, classes_exp = [], []
 
-        # mapping to the "concept index" used in the original script writeup
-        # (race: white baseline; patron: undergrad baseline)
-        class_map = {}
-        if label_kind == "race_ethnicity":
-            class_map = {
-                0: 1,  # black
-                1: 2,  # asian
-                2: 3,  # aian
-                3: 4,  # two or more
-                4: 5,  # hispanic
-            }
-        elif label_kind == "patron_type":
-            class_map = {
-                0: 1,  # grad
-                1: 2,  # faculty
-                2: 3,  # staff
-                3: 4,  # alumni
-                4: 5,  # outside
-            }
+            class_map = {}
+            if label_kind == "race_ethnicity":
+                class_map = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}
+            elif label_kind == "patron_type":
+                class_map = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}
 
-        for feat in feat_const:
-            for c in range(n_classes - 1):
-                feats_exp.append(feat)
-                classes_exp.append(str(class_map.get(c, c)))
+            for feat in feat_const:
+                for c in range(n_classes - 1):
+                    feats_exp.append(feat)
+                    classes_exp.append(str(class_map.get(c, c)))
 
-        valid = ~np.isnan(params)
-        stats_df = pd.DataFrame(
-            {
-                "feature": [feats_exp[i] for i in range(len(valid)) if valid[i]],
-                "class": [classes_exp[i] for i in range(len(valid)) if valid[i]],
-                "coef": params[valid],
-                "p_value": pvals[valid],
-            }
-        )
+            stats_df = pd.DataFrame(
+                {
+                    "feature": feats_exp,
+                    "class": classes_exp,
+                    "coef": params,
+                    "p_value": pvals,
+                }
+            )
 
-    stats_df = stats_df[stats_df.feature != "const"].copy()
-    stats_df = stats_df.dropna(subset=["coef", "p_value"]).reset_index(drop=True)
-    stats_df = stats_df.loc[
-        stats_df["coef"].abs().sort_values(ascending=False).index
-    ].reset_index(drop=True)
+            stats_df = stats_df[stats_df["feature"] != "const"].reset_index(drop=True)
+
+        stats_df = stats_df.dropna(subset=["coef"]).reset_index(drop=True)
+        stats_df = stats_df.loc[
+            stats_df["coef"].abs().sort_values(ascending=False).index
+        ].reset_index(drop=True)
+
+    except Exception as e:
+        # do not fail the whole run if statsmodels cannot fit
+        stats_df = pd.DataFrame(columns=["feature", "class", "coef", "p_value"])
+        results["statsmodels_error"] = f"{type(e).__name__}: {e}"
 
     results["statsmodels"] = stats_df
     return results
@@ -401,7 +408,9 @@ def serialize_for_json(results):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="run content-only attribute probing")
+    parser = argparse.ArgumentParser(
+        description="run content-only attribute probing (open models only)"
+    )
     parser.add_argument(
         "--domains",
         nargs="+",
@@ -422,7 +431,7 @@ def main():
     parser.add_argument(
         "--ablation",
         action="store_true",
-        help="run llama temp ablation (0.0 vs 0.3), academic only; writes probe_ablation.json",
+        help="run llama temperature ablation (0.0 vs 0.3), academic only; writes probe_ablation.json",
     )
     args = parser.parse_args()
 
@@ -435,12 +444,15 @@ def main():
         char = "race_ethnicity"
 
         df = load_data(model, char, input_dir=input_dir)
-        max_features = GEMMA_MAX_FEATURES
-        results = probe_content(df, model_name=model, max_features=max_features)
+        results = probe_content(df, model_name=model, max_features=TFIDF_MAX_FEATURES)
 
-        print(f"debug domain={domain} input_dir={input_dir} model={model} char={char}")
+        print(
+            f"debug domain={domain} input_dir={input_dir} model={model} char={char} max_features={TFIDF_MAX_FEATURES}"
+        )
         print("debug statsmodels head:")
         print(results["statsmodels"].head(20).to_string(index=False))
+        if "statsmodels_error" in results:
+            print("debug statsmodels_error:", results["statsmodels_error"])
         sys.exit(0)
 
     if args.ablation:
@@ -466,7 +478,7 @@ def main():
                 results = probe_content(
                     df,
                     model_name=model,
-                    max_features=DEFAULT_MAX_FEATURES,
+                    max_features=TFIDF_MAX_FEATURES,
                 )
                 all_results[model_tag][char] = results
                 progress.update(1)
@@ -478,7 +490,7 @@ def main():
         print("wrote probe_ablation.json")
         return
 
-    # main run: open models only, content only, both domains by default
+    # main run: open models only, content only
     all_results = {}
     total = len(args.domains) * len(OPEN_MODEL_NAMES) * len(characteristics)
     progress = tqdm(total=total, desc="running probes (open models, content only)")
@@ -490,15 +502,12 @@ def main():
         for model in OPEN_MODEL_NAMES:
             all_results[domain][model] = {}
 
-            model_lower = model.lower()
-            max_features = GEMMA_MAX_FEATURES if "gemma" in model_lower else DEFAULT_MAX_FEATURES
-
             for char in characteristics:
                 df = load_data(model, char, input_dir=input_dir)
                 results = probe_content(
                     df,
                     model_name=model,
-                    max_features=max_features,
+                    max_features=TFIDF_MAX_FEATURES,
                 )
                 all_results[domain][model][char] = results
                 progress.update(1)
