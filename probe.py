@@ -1,51 +1,31 @@
 """
-Bias Probing via Attributes Classification of LLM Outputs
+Bias probing via attributes classification of LLM outputs (open models only)
 
-This script probes whether large language model (LLM) outputs exhibit systematic
-variation across demographic characteristics (e.g., sex, race/ethnicity, patron type).
+This script probes whether open-weight model outputs exhibit systematic variation across
+demographic characteristics (sex, race/ethnicity, patron type).
 
-It loads LLM-generated responses stored in seed-wise JSON files, then builds classifiers
-(Logistic Regression, MLP, and XGBoost) to predict demographic labels based on two types
-of linguistic cues:
+it loads seed-wise JSON files produced by:
+- academic: run.py  -> academic_outputs/
+- public:   public_run.py -> public_outputs/
 
-1. Content words (TF-IDF weighted)
-2. Function words / stopwords (normalized raw counts)
+then it trains simple classifiers to predict demographic labels from response text using:
+- content words (tf-idf, with english stopwords removed)
 
-The script performs 5-fold cross-validation using fixed random seeds, reporting:
-- Mean accuracy and 95% confidence interval
-- Averaged feature weights across folds
-- Statistical significance of features using statsmodels logistic regression
-- Volcano plots to visualize coefficient strength vs. p-value
+notes:
+- function-word-only probing is removed (not needed)
+- only open models are evaluated: llama-3.1-8b, ministral-8b, gemma-2-9b
+- we use leave-one-seed-out splits (5 folds if you used 5 seeds)
 
-MODELS EVALUATED:
-- Open-weights models: Llama-3.1-8B, Ministral-8B, Gemma-2-9B
-- Commercial models: GPT-4o, Claude-3.5-Sonnet, Gemini-2.5-Pro
+outputs:
+- probe.json (default) with results for both academic + public domains
+- probe_ablation.json if you run --ablation (llama temp 0.0 vs 0.3, academic only)
 
-NOTE: Claude and Gemma-2 generate significantly shorter responses (~163 words) compared
-to other models (~200-430 words). To prevent overfitting due to sparsity, these models
-use reduced feature sets:
-- Content mode: 60 features (vs 120 for other models)
-- Function word mode: 198 features (unchanged)
-
-REFERENCE GROUP ENCODINGS (used by statsmodels for baseline class):
-- Sex:             F(0), M (1)
-- Race/Ethnicity:  White (0), Black or African American (1), Asian or Pacific
-                   Islander (2), American Indian or Alaska Native (3),
-                   Two or More Races (4), Hispanic or Latino (5)
-- Patron Type:     Undergraduate student (0), Graduate student (1), Faculty (2),
-                   Staff (3), Alumni (4), Outside user (5)
-
-USAGE:
-- Default:    python probe.py
-              Runs full evaluation across all models, characteristics, and modes.
-              Outputs: probe.json
-
-- Debug:      python probe.py --debug
-              Runs single probe (Gemma-2, patron_type, stopwords) for testing.
-
-- Ablation:   python probe.py --ablation
-              Runs temperature sensitivity analysis for Llama-3.1-8B (temp 0.0 and 0.3).
-              Outputs: probe_ablation.json
+usage:
+python probe.py
+python probe.py --domains academic
+python probe.py --domains public
+python probe.py --ablation
+python probe.py --debug
 """
 
 import argparse
@@ -53,231 +33,162 @@ import json
 import os
 import string
 import sys
-import warnings
 
-import nltk
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
-from nltk.corpus import stopwords
 from scipy.stats import t
-from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import LabelEncoder, StandardScaler
 from tqdm import tqdm
 from xgboost import XGBClassifier
 
-nltk.download("stopwords")
-stop_words_set = set(stopwords.words("english"))
+# open models only (strictly comparable across academic/public)
+OPEN_MODEL_NAMES = [
+    "meta-llama/Llama-3.1-8B-Instruct",
+    "mistralai/Ministral-8B-Instruct-2410",
+    "google/gemma-2-9b-it",
+]
+
+# default output dirs in your repo layout
+DOMAIN_TO_DIR = {
+    "academic": "academic_outputs",
+    "public": "public_outputs",
+}
+
+# reduce content features for gemma (shorter responses)
+DEFAULT_MAX_FEATURES = 120
+GEMMA_MAX_FEATURES = 60
 
 
 def load_data(
     model_name: str,
     characteristic: str,
-    input_dir: str = "outputs",
+    input_dir: str,
     failure_token: str = "[NO_TEXT_AFTER_RETRIES]",
     *,
     temperature_filter: float | None = None,
 ) -> pd.DataFrame:
     """
-    Load model generation outputs and extract text responses and target characteristics.
+    load model outputs and return a df with columns: response, label, seed
 
-    Parameters:
-    - model_name: HF/OpenAI model name (e.g., 'meta-llama/Llama-3.1-8B-Instruct', 'gpt-4o').
-    - characteristic: One of 'sex', 'race_ethnicity', or 'patron_type'.
-    - input_dir: Directory containing seed-wise output JSON files.
-    - failure_token: Token indicating failed generation to filter out.
-    - temperature_filter: If provided, only load files with *_temp{temperature}_seed_*.json.
-                          If None, only load non-temp-tag files (default 0.7).
-
-    Returns:
-    - DataFrame with columns ['response', 'label', 'seed'].
+    temperature_filter:
+      - None: load files like <tag>_seed_*.json
+      - float: load files like <tag>_temp{temperature}_seed_*.json
     """
-    assert characteristic in [
-        "sex",
-        "race_ethnicity",
-        "patron_type",
-    ], "Characteristic must be one of: sex, race_ethnicity, patron_type"
+    assert characteristic in ["sex", "race_ethnicity", "patron_type"], (
+        "characteristic must be one of: sex, race_ethnicity, patron_type"
+    )
 
     tag = model_name.split("/")[-1].replace("-", "_").replace("/", "_")
 
-    # select files either with a specific temp tag or only the non-tagged (default) ones
     if temperature_filter is None:
         prefix = f"{tag}_seed_"
     else:
         prefix = f"{tag}_temp{temperature_filter}_seed_"
 
+    if not os.path.isdir(input_dir):
+        raise FileNotFoundError(f"input_dir not found: {input_dir}")
+
     files = [
         f for f in os.listdir(input_dir) if f.startswith(prefix) and f.endswith(".json")
     ]
-
-    rows = []
-    for file in files:
-        with open(os.path.join(input_dir, file), "r", encoding="utf-8") as f:
-            data = json.load(f)
-            for entry in data:
-                response = entry["response"]
-                if failure_token not in response:  # Filter out failed generations
-                    rows.append(
-                        {
-                            "response": response,
-                            "label": entry[characteristic],
-                            "seed": entry["seed"],
-                        }
-                    )
-
-    df = pd.DataFrame(rows)
-    df = df.dropna(subset=["response", "label"]).reset_index(drop=True)
-    return df
-
-
-def load_data_with_temp(
-    model_name: str,
-    characteristic: str,
-    temperature: float,
-    input_dir: str = "outputs",
-    failure_token: str = "[NO_TEXT_AFTER_RETRIES]",
-) -> pd.DataFrame:
-    """
-    Load model generation outputs with specific temperature tag.
-
-    Parameters:
-    - model_name: HF model name (e.g., 'meta-llama/Llama-3.1-8B-Instruct').
-    - characteristic: One of 'sex', 'race_ethnicity', or 'patron_type'.
-    - temperature: Temperature value (0.0 or 0.3) for file matching.
-    - input_dir: Directory containing seed-wise output JSON files.
-    - failure_token: Token indicating failed generation to filter out.
-
-    Returns:
-    - DataFrame with columns ['response', 'label', 'seed'].
-    """
-    assert characteristic in [
-        "sex",
-        "race_ethnicity",
-        "patron_type",
-    ], "Characteristic must be one of: sex, race_ethnicity, patron_type"
-
-    tag = model_name.split("/")[-1].replace("-", "_").replace("/", "_")
-    temp_str = f"temp{temperature}"
-    files = [
-        f
-        for f in os.listdir(input_dir)
-        if f.startswith(f"{tag}_{temp_str}_seed_") and f.endswith(".json")
-    ]
-
     if not files:
         raise FileNotFoundError(
-            f"No files found for {tag} with temperature {temperature}"
+            f"no matching files in {input_dir} for prefix='{prefix}' (model={model_name})"
         )
 
     rows = []
     for file in files:
-        with open(os.path.join(input_dir, file), "r", encoding="utf-8") as f:
-            data = json.load(f)
-            for entry in data:
-                response = entry["response"]
-                if failure_token not in response:
-                    rows.append(
-                        {
-                            "response": response,
-                            "label": entry[characteristic],
-                            "seed": entry["seed"],
-                        }
-                    )
+        path = os.path.join(input_dir, file)
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f) or []
+        for entry in data:
+            response = entry.get("response", "")
+            if not response:
+                continue
+            if failure_token in response:
+                continue
+            rows.append(
+                {
+                    "response": response,
+                    "label": entry.get(characteristic, None),
+                    "seed": entry.get("seed", None),
+                }
+            )
 
     df = pd.DataFrame(rows)
-    df = df.dropna(subset=["response", "label"]).reset_index(drop=True)
+    df = df.dropna(subset=["response", "label", "seed"]).reset_index(drop=True)
+    df["seed"] = df["seed"].astype(int)
     return df
 
 
 def compute_ci(accs, confidence=0.95):
-    mean = np.mean(accs)
-    sem = np.std(accs, ddof=1) / np.sqrt(len(accs))
-    h = sem * t.ppf((1 + confidence) / 2.0, len(accs) - 1)
+    mean = float(np.mean(accs))
+    sem = float(np.std(accs, ddof=1) / np.sqrt(len(accs)))
+    h = float(sem * t.ppf((1 + confidence) / 2.0, len(accs) - 1))
     return mean, (mean - h, mean + h)
 
 
 def get_feature_weights(clf, feature_names, model_type):
     if model_type == "logistic":
         weights = clf.coef_[0]
-    elif model_type == "mlp":
+        return (
+            pd.DataFrame({"feature": feature_names, "weight": weights})
+            .sort_values("weight", ascending=False)
+            .reset_index(drop=True)
+        )
+
+    if model_type == "mlp":
         weights = clf.coefs_[0][:, 0]
-    elif model_type == "xgboost":
+        return (
+            pd.DataFrame({"feature": feature_names, "weight": weights})
+            .sort_values("weight", ascending=False)
+            .reset_index(drop=True)
+        )
+
+    if model_type == "xgboost":
         booster = clf.get_booster()
         importance = booster.get_score(importance_type="weight")
-        return pd.DataFrame(
+        df = pd.DataFrame(
             {"feature": list(importance.keys()), "weight": list(importance.values())}
-        ).sort_values(by="weight", ascending=False)
-    else:
-        raise ValueError("Unsupported model type")
+        ).sort_values("weight", ascending=False)
+        return df.reset_index(drop=True)
 
-    return pd.DataFrame({"feature": feature_names, "weight": weights}).sort_values(
-        by="weight", ascending=False
+    raise ValueError(f"unsupported model type: {model_type}")
+
+
+def build_content_vectorizer(max_features: int):
+    stop_words_set = set(ENGLISH_STOP_WORDS).union({"mr", "ms", "mrs", "miss"})
+
+    class ContentTokenizer:
+        def __init__(self):
+            self.exclusion_set = stop_words_set
+
+        def __call__(self, doc):
+            tokens = [t.strip(string.punctuation).lower() for t in doc.split()]
+            return [t for t in tokens if t and t not in self.exclusion_set]
+
+    return TfidfVectorizer(
+        tokenizer=ContentTokenizer(),
+        token_pattern=None,
+        max_features=max_features,
     )
 
 
-def probe(df, mode="content", max_features=120, model_name=None):
+def encode_labels_for_statsmodels(df: pd.DataFrame):
     """
-    Unified probing function for content vs stylistic cues.
-
-    Reference groups for statsmodels:
-    - Sex: Female (class 0) as reference
-    - Race/Ethnicity: White (class 0) as reference
-    - Patron Type: Undergraduate student (class 0) as reference
-
-    Note: We place reference groups last in the encoding to work with statsmodels'
-    behavior, but maintain their conceptual position as class 0 in the output.
-
-    Parameters:
-        - df: DataFrame with 'response', 'label', 'seed'
-        - mode: "content" or "stopwords"
-        - max_features: number of top features to use
-        - model_name: used to conditionally reduce max_features for statsmodels
-
-    Returns:
-        - Dictionary with model results and statsmodels output
+    statsmodels MNLogit uses the last class as baseline; we set reference groups last.
+    for binary sex, we encode F=0, M=1 so statsmodels Logit models P(M).
     """
-    assert mode in ["content", "stopwords"], "mode must be 'content' or 'stopwords'"
-    results = {}
+    labels = set(df["label"].unique())
 
-    # vectorize for classifier use
-    if mode == "content":
-
-        class ContentTokenizer:
-            def __init__(self):
-                self.exclusion_set = set(stop_words_set).union(
-                    {"mr", "ms", "mrs", "miss"}
-                )
-
-            def __call__(self, doc):
-                tokens = [t.strip(string.punctuation).lower() for t in doc.split()]
-                return [t for t in tokens if t and t not in self.exclusion_set]
-
-        vectorizer = TfidfVectorizer(
-            tokenizer=ContentTokenizer(), token_pattern=None, max_features=max_features
-        )
-        X = vectorizer.fit_transform(df["response"]).toarray()
-    else:
-
-        class StopwordTokenizer:
-            def __call__(self, doc):
-                tokens = [t.strip(string.punctuation).lower() for t in doc.split()]
-                return [t for t in tokens if t in stop_words_set]
-
-        vectorizer = CountVectorizer(
-            tokenizer=StopwordTokenizer(), token_pattern=None, max_features=max_features
-        )
-        X = vectorizer.fit_transform(df["response"]).toarray()
-        X = StandardScaler().fit_transform(X)
-
-    le = LabelEncoder()
-    # put reference groups at the end for statsmodels
-    if set(df["label"].unique()) == {"F", "M"}:
-        # move Female (reference) to the end
-        le.classes_ = np.array(["M", "F"])
-    elif set(df["label"].unique()) == {
+    if labels == {"F", "M"}:
+        classes = np.array(["F", "M"])
+        label_kind = "sex"
+    elif labels == {
         "White",
         "Black or African American",
         "Asian or Pacific Islander",
@@ -285,8 +196,7 @@ def probe(df, mode="content", max_features=120, model_name=None):
         "Two or More Races",
         "Hispanic or Latino",
     }:
-        # move White (reference) to the end
-        le.classes_ = np.array(
+        classes = np.array(
             [
                 "Black or African American",
                 "Asian or Pacific Islander",
@@ -296,7 +206,8 @@ def probe(df, mode="content", max_features=120, model_name=None):
                 "White",
             ]
         )
-    elif set(df["label"].unique()) == {
+        label_kind = "race_ethnicity"
+    elif labels == {
         "Undergraduate student",
         "Faculty",
         "Graduate student",
@@ -304,8 +215,7 @@ def probe(df, mode="content", max_features=120, model_name=None):
         "Staff",
         "Outside user",
     }:
-        # move undergraduate (reference) to the end
-        le.classes_ = np.array(
+        classes = np.array(
             [
                 "Graduate student",
                 "Faculty",
@@ -315,17 +225,36 @@ def probe(df, mode="content", max_features=120, model_name=None):
                 "Undergraduate student",
             ]
         )
+        label_kind = "patron_type"
     else:
         raise RuntimeError(
-            f"Label mismatch: unexpected label set encountered:\n{sorted(df['label'].unique())}"
+            f"label mismatch: unexpected label set encountered:\n{sorted(labels)}"
         )
 
-    y = le.fit_transform(df["label"])
+    # manual encoding with explicit class order
+    class_to_idx = {c: i for i, c in enumerate(classes)}
+    y = df["label"].map(class_to_idx).astype(int).to_numpy()
+
+    return y, classes, label_kind
+
+
+def probe_content(df: pd.DataFrame, *, model_name: str, max_features: int):
+    """
+    content-only probing (tf-idf)
+    returns:
+      - classifiers: logistic / mlp / xgboost (acc + avg weights)
+      - statsmodels: coefficients + p-values (logit / mnlogit)
+    """
+    results = {}
+
+    vectorizer = build_content_vectorizer(max_features=max_features)
+    X = vectorizer.fit_transform(df["response"]).toarray()
     feature_names = vectorizer.get_feature_names_out()
+
+    y, classes, label_kind = encode_labels_for_statsmodels(df)
     seeds = sorted(df["seed"].unique())
     splits = [(df["seed"] != s, df["seed"] == s) for s in seeds]
 
-    # classifiers
     model_defs = {
         "logistic": lambda: LogisticRegression(
             C=1.0, max_iter=1000, solver="liblinear", penalty="l2", random_state=42
@@ -347,7 +276,6 @@ def probe(df, mode="content", max_features=120, model_name=None):
             colsample_bytree=0.8,
             reg_alpha=0.1,
             reg_lambda=1.0,
-            use_label_encoder=False,
             eval_metric="logloss",
             verbosity=0,
             random_state=42,
@@ -364,12 +292,13 @@ def probe(df, mode="content", max_features=120, model_name=None):
             weights.append(get_feature_weights(clf, feature_names, name))
 
         mean_acc, ci = compute_ci(accs)
+
         avg_weights = (
             pd.concat(weights)
-            .groupby("feature")
+            .groupby("feature", as_index=False)["weight"]
             .mean()
-            .reset_index()
             .sort_values("weight", ascending=False)
+            .reset_index(drop=True)
         )
 
         if name == "xgboost":
@@ -378,38 +307,26 @@ def probe(df, mode="content", max_features=120, model_name=None):
 
         results[name] = {"mean_acc": mean_acc, "ci": ci, "feature_weights": avg_weights}
 
-    # statsmodels - with adjusted class labels to maintain conceptually clear
-    # adjust feature size for shorter-response models (Claude and Gemma-2)
-    if (
-        model_name
-        and ("gemma" in model_name.lower() or "claude" in model_name.lower())
-        and mode == "content"
-    ):
-        vectorizer_stats = TfidfVectorizer(
-            tokenizer=ContentTokenizer(), token_pattern=None, max_features=60
-        )
-        X_stats = vectorizer_stats.fit_transform(df["response"]).toarray()
-        feature_names_stats = vectorizer_stats.get_feature_names_out()
-    else:
-        X_stats = X
-        feature_names_stats = feature_names
+    # statsmodels
+    # for gemma, keep statsmodels feature cap aligned with the main probe cap
+    vectorizer_stats = build_content_vectorizer(max_features=max_features)
+    X_stats = vectorizer_stats.fit_transform(df["response"]).toarray()
+    feature_names_stats = vectorizer_stats.get_feature_names_out()
 
     X_const = sm.add_constant(X_stats)
     n_classes = len(np.unique(y))
 
-    # create mapping from encoded indices to original concept indices
-    # for binary classification (sex)
     if n_classes == 2:
+        # sex: y=1 means M (by our encoding)
         sm_model = sm.Logit(y, X_const).fit(disp=0, maxiter=2000, method="lbfgs")
         params, pvals = sm_model.params, sm_model.pvalues
         feat_const = ["const"] + list(feature_names_stats)
         mask = ~np.isnan(params)
 
-        # for sex: male is now encoded as 0, but conceptually it's class 1
         stats_df = pd.DataFrame(
             {
                 "feature": [feat_const[i] for i in range(len(mask)) if mask[i]],
-                "class": "1",  # male (conceptually class 1)
+                "class": "M",
                 "coef": params[mask],
                 "p_value": pvals[mask],
             }
@@ -418,51 +335,33 @@ def probe(df, mode="content", max_features=120, model_name=None):
         sm_model = sm.MNLogit(y, X_const).fit(disp=0, maxiter=2000, method="lbfgs")
         params, pvals = sm_model.params.flatten(), sm_model.pvalues.flatten()
         feat_const = ["const"] + list(feature_names_stats)
+
         feats_exp, classes_exp = [], []
 
-        # map encoded classes back to original concept classes
+        # mapping to the "concept index" used in the original script writeup
+        # (race: white baseline; patron: undergrad baseline)
         class_map = {}
-        if set(df["label"].unique()) == {
-            "White",
-            "Black or African American",
-            "Asian or Pacific Islander",
-            "American Indian or Alaska Native",
-            "Two or More Races",
-            "Hispanic or Latino",
-        }:
-            # race/ethnicity mapping
+        if label_kind == "race_ethnicity":
             class_map = {
-                0: 1,  # Black → 1
-                1: 2,  # Asian → 2
-                2: 3,  # American Indian/Alaska Native → 3
-                3: 4,  # Two or More → 4
-                4: 5,  # Hispanic → 5
+                0: 1,  # black
+                1: 2,  # asian
+                2: 3,  # aian
+                3: 4,  # two or more
+                4: 5,  # hispanic
             }
-        elif set(df["label"].unique()) == {
-            "Undergraduate student",
-            "Faculty",
-            "Graduate student",
-            "Alumni",
-            "Staff",
-            "Outside user",
-        }:
-            # patron type mapping
+        elif label_kind == "patron_type":
             class_map = {
-                0: 1,  # Graduate → 1
-                1: 2,  # Faculty → 2
-                2: 3,  # Staff → 3
-                3: 4,  # Alumni → 4
-                4: 5,  # Outside → 5
+                0: 1,  # grad
+                1: 2,  # faculty
+                2: 3,  # staff
+                3: 4,  # alumni
+                4: 5,  # outside
             }
 
-        # build feature list with mapped classes
-        for i, feat in enumerate(feat_const):
+        for feat in feat_const:
             for c in range(n_classes - 1):
                 feats_exp.append(feat)
-                original_class = class_map.get(
-                    c, c
-                )  # map back to original concept class
-                classes_exp.append(str(original_class))
+                classes_exp.append(str(class_map.get(c, c)))
 
         valid = ~np.isnan(params)
         stats_df = pd.DataFrame(
@@ -474,158 +373,142 @@ def probe(df, mode="content", max_features=120, model_name=None):
             }
         )
 
-    stats_df = stats_df[stats_df.feature != "const"]
+    stats_df = stats_df[stats_df.feature != "const"].copy()
     stats_df = stats_df.dropna(subset=["coef", "p_value"]).reset_index(drop=True)
     stats_df = stats_df.loc[
         stats_df["coef"].abs().sort_values(ascending=False).index
     ].reset_index(drop=True)
+
     results["statsmodels"] = stats_df
-
     return results
-
-
-def print_top_features(results, top_n=10):
-    for model in ["logistic", "mlp", "xgboost"]:
-        if model in results:
-            print(f"\n=== Top {top_n} features for {model.upper()} ===")
-            print(results[model]["feature_weights"].head(top_n).to_string(index=False))
-    if "statsmodels" in results:
-        print(
-            f"\n=== Top {top_n} features by STATS MODELS Logistic Regression (with p-values) ==="
-        )
-        print(results["statsmodels"].head(top_n).to_string(index=False))
 
 
 def serialize_for_json(results):
     def convert(obj):
         if isinstance(obj, pd.DataFrame):
             return obj.to_dict(orient="records")
-        elif isinstance(obj, (np.float32, np.float64)):
+        if isinstance(obj, (np.float32, np.float64)):
             return float(obj)
-        elif isinstance(obj, (np.int32, np.int64)):
+        if isinstance(obj, (np.int32, np.int64)):
             return int(obj)
-        elif isinstance(obj, (np.ndarray, list)):
+        if isinstance(obj, (np.ndarray, list)):
             return [convert(i) for i in obj]
-        elif isinstance(obj, dict):
+        if isinstance(obj, dict):
             return {k: convert(v) for k, v in obj.items()}
-        else:
-            return obj
+        return obj
 
     return convert(results)
 
 
 def main():
-    """
-    Main driver for probing LLM outputs by demographic attributes.
-    With --debug, only run a single probe and let errors propagate for inspection.
-    With --ablation, run temperature ablation study for Llama-3.1-8B.
-    Otherwise, runs the full grid of models × characteristics × modes.
-    """
-    parser = argparse.ArgumentParser(description="Run attribute‐probing suite")
+    parser = argparse.ArgumentParser(description="run content-only attribute probing")
+    parser.add_argument(
+        "--domains",
+        nargs="+",
+        default=["academic", "public"],
+        choices=["academic", "public"],
+        help="which domains to probe",
+    )
+    parser.add_argument(
+        "--output_path",
+        default="probe.json",
+        help="where to write the json results",
+    )
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="only run Gemma-2 patron_type/stopwords probe and expose any errors",
+        help="run a single small probe and expose any errors",
     )
     parser.add_argument(
         "--ablation",
         action="store_true",
-        help="run temperature ablation study for Llama-3.1-8B (temp 0.0 and 0.3); "
-        "writes probe_ablation.json",
-    )
-    parser.add_argument(
-        "--temperature_filter",
-        type=float,
-        default=None,
-        help="if set, only load files with this temperature tag (e.g., 0.0 -> "
-        "*_temp0.0_seed_*.json). "
-        "if omitted, only load non-tagged files (default 0.7).",
+        help="run llama temp ablation (0.0 vs 0.3), academic only; writes probe_ablation.json",
     )
     args = parser.parse_args()
 
+    characteristics = ["sex", "race_ethnicity", "patron_type"]
+
     if args.debug:
+        domain = "public" if "public" in args.domains else args.domains[0]
+        input_dir = DOMAIN_TO_DIR[domain]
         model = "google/gemma-2-9b-it"
-        char = "patron_type"
-        mode = "stopwords"
-        print(f"DEBUG: running single probe for {model} / {char} / {mode}")
-        df = load_data(model, char, temperature_filter=args.temperature_filter)
-        results = probe(df, mode=mode, max_features=120, model_name=model)
-        print("\nDEBUG: full statsmodels output:\n")
-        print(results["statsmodels"])
+        char = "race_ethnicity"
+
+        df = load_data(model, char, input_dir=input_dir)
+        max_features = GEMMA_MAX_FEATURES
+        results = probe_content(df, model_name=model, max_features=max_features)
+
+        print(f"debug domain={domain} input_dir={input_dir} model={model} char={char}")
+        print("debug statsmodels head:")
+        print(results["statsmodels"].head(20).to_string(index=False))
         sys.exit(0)
 
-    elif args.ablation:
-
-        print("Running temperature ablation study for Llama-3.1-8B...")
+    if args.ablation:
         model = "meta-llama/Llama-3.1-8B-Instruct"
-        temperatures = [0.0, 0.3]
-        characteristics = ["sex", "race_ethnicity", "patron_type"]
-        modes = ["content", "stopwords"]
+        temps = [0.0, 0.3]
+        domain = "academic"
+        input_dir = DOMAIN_TO_DIR[domain]
 
-        # same nested structure as the main run:
-        # { "<model> [temp=0.0]": { "<characteristic>": { "<mode>": results, ... }, ... }, ... }
         all_results = {}
+        total = len(temps) * len(characteristics)
+        progress = tqdm(total=total, desc="running llama temp ablation (content)")
 
-        total = len(temperatures) * len(characteristics) * len(modes)
-        progress = tqdm(total=total, desc="Running ablation probes")
-
-        for temp in temperatures:
+        for temp in temps:
             model_tag = f"{model} [temp={temp}]"
             all_results[model_tag] = {}
             for char in characteristics:
-                try:
-                    df = load_data_with_temp(model, char, temperature=temp)
-                except FileNotFoundError as e:
-                    print(f"\nWarning: {e}")
-                    # skip both modes for this characteristic
-                    progress.update(len(modes))
-                    continue
+                df = load_data(
+                    model,
+                    char,
+                    input_dir=input_dir,
+                    temperature_filter=temp,
+                )
+                results = probe_content(
+                    df,
+                    model_name=model,
+                    max_features=DEFAULT_MAX_FEATURES,
+                )
+                all_results[model_tag][char] = results
+                progress.update(1)
 
-                all_results[model_tag][char] = {}
-                for mode in modes:
-                    results = probe(df, mode=mode, max_features=120, model_name=model)
-                    all_results[model_tag][char][mode] = results
-                    progress.update(1)
         progress.close()
+        with open("probe_ablation.json", "w", encoding="utf-8") as f:
+            json.dump(serialize_for_json(all_results), f, ensure_ascii=False, indent=2)
 
-        # write JSON with same serializer as main
-        with open("probe_ablation.json", "w") as f:
-            json.dump(serialize_for_json(all_results), f, indent=2)
+        print("wrote probe_ablation.json")
+        return
 
-        print("\nAblation study completed. Results saved to 'probe_ablation.json'.")
-        sys.exit(0)
+    # main run: open models only, content only, both domains by default
+    all_results = {}
+    total = len(args.domains) * len(OPEN_MODEL_NAMES) * len(characteristics)
+    progress = tqdm(total=total, desc="running probes (open models, content only)")
 
-    else:
-        model_names = [
-            "meta-llama/Llama-3.1-8B-Instruct",
-            "mistralai/Ministral-8B-Instruct-2410",
-            "google/gemma-2-9b-it",
-            "gpt-4o-2024-08-06",
-            "claude-3-5-sonnet-20241022",
-            "gemini-2.5-pro-preview-05-06",
-        ]
-        characteristics = ["sex", "race_ethnicity", "patron_type"]
-        modes = ["content", "stopwords"]
+    for domain in args.domains:
+        input_dir = DOMAIN_TO_DIR[domain]
+        all_results[domain] = {}
 
-        all_results = {}
-        total = len(model_names) * len(characteristics) * len(modes)
-        progress = tqdm(total=total, desc="Running probes")
+        for model in OPEN_MODEL_NAMES:
+            all_results[domain][model] = {}
 
-        for model in model_names:
-            all_results[model] = {}
+            model_lower = model.lower()
+            max_features = GEMMA_MAX_FEATURES if "gemma" in model_lower else DEFAULT_MAX_FEATURES
+
             for char in characteristics:
-                df = load_data(model, char, temperature_filter=args.temperature_filter)
-                all_results[model][char] = {}
-                for mode in modes:
-                    results = probe(df, mode=mode, max_features=120, model_name=model)
-                    all_results[model][char][mode] = results
-                    progress.update(1)
+                df = load_data(model, char, input_dir=input_dir)
+                results = probe_content(
+                    df,
+                    model_name=model,
+                    max_features=max_features,
+                )
+                all_results[domain][model][char] = results
+                progress.update(1)
 
-        progress.close()
+    progress.close()
 
-        with open("probe.json", "w") as f:
-            json.dump(serialize_for_json(all_results), f, indent=2)
-        print("\nAll experiments completed and results saved to 'probe.json'.")
+    with open(args.output_path, "w", encoding="utf-8") as f:
+        json.dump(serialize_for_json(all_results), f, ensure_ascii=False, indent=2)
+
+    print(f"wrote {args.output_path}")
 
 
 if __name__ == "__main__":
