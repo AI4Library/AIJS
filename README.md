@@ -6,7 +6,7 @@ We evaluate whether **open-weight LLMs**, when prompted as helpful librarians, *
 
 ---
 
-## Main finding at a glance
+## Main finding
 
 ![Summary of classification margins across models, settings, and demographic dimensions](phase1_overview_forest_sig.png)
 
@@ -14,7 +14,7 @@ We evaluate whether **open-weight LLMs**, when prompted as helpful librarians, *
 
 ---
 
-## Study design (what we did)
+## Study design
 
 - **Settings**
   - **Academic libraries:** three common reference templates (special collections, sports team name origin, historical population).
@@ -36,7 +36,7 @@ We evaluate whether **open-weight LLMs**, when prompted as helpful librarians, *
 
 ---
 
-## Evaluation (high level)
+## Evaluation
 
 We treat fairness as an empirical question: if responses systematically differ by a protected attribute, a classifier should be able to predict the attribute from response text above chance.
 
@@ -47,46 +47,6 @@ We treat fairness as an empirical question: if responses systematically differ b
 - **Interpretation:** when a signal is detected, we inspect word-level drivers (volcano plots).
 
 If you want the full protocol framing and reusable implementation details, see https://github.com/AI4Library/FEP.
-
----
-
-## What’s in this repository
-
-- `run.py`  
-  Generate synthetic patron emails and collect model responses for both settings.
-
-- `probe.py`  
-  Run the diagnostic classification analysis and produce summary figures.
-
-- `outputs/`  
-  Collected prompts and model responses (organized by model, setting, seed).
-
-- `results/`  
-  Plots and tables used in the chapter (including the main summary figure above).
-
----
-
-## Reproduce the results (minimal)
-
-1) Install dependencies
-```bash
-python3.10 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-````
-
-2. Run the analysis (uses existing outputs)
-
-```bash
-python probe.py
-```
-
-3. (Optional) Regenerate outputs, then re-run analysis
-
-```bash
-python run.py
-python probe.py
-```
 
 ---
 
