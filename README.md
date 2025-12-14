@@ -54,19 +54,18 @@ If you want the full protocol framing and reusable implementation details, see h
 
 ## License
 
-MIT License (see `LICENSE`).
+MIT
 
----
+[//]: # (---)
 
-## Citation
+[//]: # ()
+[//]: # (## Citation)
 
-If you use the general protocol beyond this chapter's study, please cite the FEP repository: [https://github.com/AI4Library/FEP](https://github.com/AI4Library/FEP).
+[//]: # ()
+[//]: # (todo)
 
-```markdown
-@article{wang2025fairness,
-  title={Fairness Evaluation of Large Language Models in Academic Library Reference Services},
-  author={Wang, Haining and Clark, Jason and Yan, Yueru and Bradley, Star and Chen, Ruiyang and Zhang, Yiqiong and Fu, Hengyi and Tian, Zuoyu},
-  journal={arXiv preprint arXiv:2507.04224},
-  year={2025}
-}
-```
+[//]: # (```markdown)
+
+[//]: # (todo)
+
+[//]: # (```)
