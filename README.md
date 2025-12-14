@@ -56,6 +56,19 @@ If you want the full protocol framing and reusable implementation details, see h
 
 MIT
 
+---
+
+## Contributing
+
+Contributions are welcome! Please open an issue before submitting a pull request.
+
+## Contact
+
+- **Reproduction / data / code questions:** Haining Wang (hw56@iu.edu)
+- **General questions / project context:** Jason Clark (jaclark@montana.edu)
+
+
+
 [//]: # (---)
 
 [//]: # ()
