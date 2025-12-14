@@ -8,7 +8,7 @@ We evaluate whether **open-weight LLMs**, when prompted as helpful librarians, *
 
 ## Main finding at a glance
 
-![Summary of classification margins across models, settings, and demographic dimensions](results/phase1_overview_forest_sig.png)
+![Summary of classification margins across models, settings, and demographic dimensions](phase1_overview_forest_sig.png)
 
 **Summary:** Across **academic** and **public** library settings, we find **no detectable race/ethnicity-linked differentiation** in responses for any model. Sex-linked signals are generally near chance; the only consistent detectable signal is for **Llama-3.1 (academic setting)**, and it is driven by a **stylistic salutation ("dear")** rather than substantive differences in service quality.
 
