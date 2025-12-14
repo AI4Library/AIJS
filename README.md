@@ -1,79 +1,81 @@
-# Fairness Evaluation of Large Language Models in Academic Library Reference Services ⚖
+# Fairness Audit of Open LLMs for Library Reference Services ⚖
 
-This repository supports the paper **Fairness Evaluation of Large Language Models in Academic Library Reference 
-Services ⚖**.
-Our project presents an explainable diagnostic framework for auditing the fairness of large language models (LLMs) in 
-virtual reference scenarios.
+This repository supports our chapter **Equitable Intelligence in Practice: A Fairness Audit of Open Large Language Models for Library Reference Services**.
 
-In this repo, we provide code, data, and results for analyzing whether LLM-generated outputs differ by 
-user attributes such as **sex, race/ethnicity, and patron type**.
+We evaluate whether **open-weight LLMs**, when prompted as helpful librarians, **systematically vary** their email-style reference responses by **sex** or **race/ethnicity** cues expressed through names. This repo focuses on the study artifacts (data, scripts, figures). For the full, general Fairness Evaluation Protocol (FEP), see https://github.com/AI4Library/FEP.
 
 ---
 
-## 🧪 What's in This Repository?
+## Main finding at a glance
 
-- ✅ **[Fairness Evaluation Protocol (FEP)](probe.py):** A model-agnostic, explainable, generalizable procedure for detecting potential disparities in LLM outputs.
-- 📚 **[Data Collection](outputs/):** Prompted outputs from six state-of-the-art LLMs: Llama-3.1 (8B), Gemma-2 (9B), Ministral (8B), GPT-4o, Claude-3.5 Sonnet, and Gemini-2.5 Pro across different user groups.
-- 🦜 **[Patron-LLM Interaction Simulation](run.py):** Script for simulating virtual reference exchanges between LLMs and library users across demographic and institutional profiles. Used to generate outputs for fairness probing.
+![Summary of classification margins across models, settings, and demographic dimensions](results/phase1_overview_forest_sig.png)
 
-## 🔧 Procedure
-```text
-                              ┌───────────────────────────────┐
-                              │      PRE-FEP PREPARATION      │
-                              │  (data & response collection) │
-                              ├───────────────────────────────┤
-                              │ • Build balanced patron emails│
-                              │ • Collect six-model answers   │
-                              └───────────────────────────────┘
-                                           │
-                                           ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                            FEP  ▸  PHASE I                             │
-│                    Detect Systematic Differences                       │
-├────────────────────────────────────────────────────────────────────────┤
-│ 1. Feature engineering  →  TF-IDF                                      │
-│ 2. Diagnostic classifiers →  Logistic Reg. · MLP · XGBoost             │
-│ 3. 5-fold CV  +  Bonferroni tests  →  "Is accuracy > chance?"          │
-└────────────────────────────────────────────────────────────────────────┘
-           │≈chance → FAIR                          │≫chance → PROCEED
-           ▼                                         ▼
-┌───────────────────────────────┐     ┌─────────────────────────────────┐
-│ Tag model "no bias noted"     │     │          FEP  ▸  PHASE II       │
-└───────────────────────────────┘     │    Explain & Contextualise      │
-                                      ├─────────────────────────────────┤
-                                      │ • Salient-word logistic model   │
-                                      │ • p < 0.05 (Bonf.) & |ln OR|≥ln2│
-                                      │ • Visuals: volcano · heatmap    │
-                                      │   · radar (per role & model)    │
-                                      └─────────────────────────────────┘
-                                                    │
-                                                    ▼
-                                       ┌───────────────────────────────┐
-                                       │  Human review → bias or not   │
-                                       └───────────────────────────────┘
-                                                    │
-                                                    ▼
-                              ┌───────────────────────────────┐
-                              │         POST-FEP OUTPUT       │
-                              ├───────────────────────────────┤
-                              │ • Fairness report & graphs    │
-                              │ • Model-selection guidance    │
-                              │ • Ongoing-monitoring plan     │
-                              └───────────────────────────────┘
-```
+**Summary:** Across **academic** and **public** library settings, we find **no detectable race/ethnicity-linked differentiation** in responses for any model. Sex-linked signals are generally near chance; the only consistent detectable signal is for **Llama-3.1 (academic setting)**, and it is driven by a **stylistic salutation ("dear")** rather than substantive differences in service quality.
+
 ---
 
-## 🚀 How to Run
+## Study design (what we did)
 
-1. Install dependencies
+- **Settings**
+  - **Academic libraries:** three common reference templates (special collections, sports team name origin, historical population).
+  - **Public libraries:** three common templates (readers’ advisory, community information, practical assistance).
 
+- **Identity cues**
+  - Users are represented as **email senders** signing with a synthetic English name.
+  - Names are sampled to balance **12 groups**: sex (male/female) × race/ethnicity (6 U.S. Census categories).
+  - First names come from **SSA baby names**; surnames come from the **2010 U.S. Census surname** table.
+
+- **Models (open)**
+  - **Llama-3.1 8B Instruct**
+  - **Gemma-2 9B Instruct**
+  - **Ministral 8B Instruct**
+
+- **Scale**
+  - **5 seeds × 500 interactions per seed** per (model × setting)
+  - Target corpus size: **2,500 responses per model per setting** (after filtering generation failures)
+
+---
+
+## Evaluation (high level)
+
+We treat fairness as an empirical question: if responses systematically differ by a protected attribute, a classifier should be able to predict the attribute from response text above chance.
+
+- **Representation:** TF-IDF over top words (reduced for shorter outputs where needed); gendered honorifics masked.
+- **Diagnostic classifiers:** Logistic Regression, MLP, XGBoost.
+- **Validation:** 5-fold cross-validation (folds correspond to the 5 seeds).
+- **Inference:** one-sample tests vs chance with Bonferroni correction.
+- **Interpretation:** when a signal is detected, we inspect word-level drivers (volcano plots).
+
+If you want the full protocol framing and reusable implementation details, see https://github.com/AI4Library/FEP.
+
+---
+
+## What’s in this repository
+
+- `run.py`  
+  Generate synthetic patron emails and collect model responses for both settings.
+
+- `probe.py`  
+  Run the diagnostic classification analysis and produce summary figures.
+
+- `outputs/`  
+  Collected prompts and model responses (organized by model, setting, seed).
+
+- `results/`  
+  Plots and tables used in the chapter (including the main summary figure above).
+
+---
+
+## Reproduce the results (minimal)
+
+1) Install dependencies
 ```bash
 python3.10 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-```
+````
 
-2. Run the diagnostic classifiers
+2. Run the analysis (uses existing outputs)
 
 ```bash
 python probe.py
@@ -81,20 +83,17 @@ python probe.py
 
 ---
 
-## 📄 License
+## License
 
-[MIT License](LICENSE)
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please open an issue before submitting a pull request.
+MIT License (see `LICENSE`).
 
 ---
 
-## 📝 Citation
-```tex
+## Citation
+
+If you use the general protocol beyond this chapter's study, please cite the FEP repository: [https://github.com/AI4Library/FEP](https://github.com/AI4Library/FEP).
+
+```markdown
 @article{wang2025fairness,
   title={Fairness Evaluation of Large Language Models in Academic Library Reference Services},
   author={Wang, Haining and Clark, Jason and Yan, Yueru and Bradley, Star and Chen, Ruiyang and Zhang, Yiqiong and Fu, Hengyi and Tian, Zuoyu},
@@ -102,3 +101,4 @@ Contributions are welcome! Please open an issue before submitting a pull request
   year={2025}
 }
 ```
+
