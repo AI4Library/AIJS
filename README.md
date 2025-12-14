@@ -81,6 +81,13 @@ python -m pip install -r requirements.txt
 python probe.py
 ```
 
+3. (Optional) Regenerate outputs, then re-run analysis
+
+```bash
+python run.py
+python probe.py
+```
+
 ---
 
 ## License
