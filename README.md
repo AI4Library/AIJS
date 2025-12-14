@@ -2,8 +2,7 @@
 
 This repository supports our chapter **Equitable Intelligence in Practice: A Fairness Audit of Open Large Language Models for Library Reference Services**.
 
-This chapter is our contribution to the call for proposals for **Equitable Intelligence: Artificial Intelligence and Social Justice Intersections in Library and Information Science**, edited by **Hengyi Fu, Souvick (Vic) Ghosh, Darra Hofman, and Bharat Mehra**.
-
+This chapter is our contribution to the Call for Abstracts for **Equitable Intelligence: Artificial Intelligence and Social Justice Intersections in Library and Information Science**, edited by **Hengyi Fu, Souvick (Vic) Ghosh, Darra Hofman, and Bharat Mehra**.
 
 We evaluate whether **open-weight LLMs**, when prompted as helpful librarians, **systematically vary** their email-style reference responses by **sex** or **race/ethnicity** cues expressed through names. This repo focuses on the study artifacts (data, scripts, figures). For the full, general Fairness Evaluation Protocol (FEP), see https://github.com/AI4Library/FEP.
 
